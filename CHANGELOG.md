@@ -3,6 +3,41 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.2.0] — 2026-08-16
+
+### Changed — breaking
+- **`City` is now a node.** `Address` no longer carries `post_code` or `city`;
+  they moved onto `(:City)` reached via `(:Address)-[:IN_CITY]->(:City)`.
+  Cities are keyed by country + post code, because the register files one post
+  code under several names (`1040` is both *Etterbeek* and *Brussel*) while one
+  name spans many post codes (Antwerpen has nine). Every spelling seen is kept
+  in `City.aliases`, so searching either name finds the node.
+- Address search matches the locality against all aliases, and returns the
+  city alongside each result.
+- Dropped the now-meaningless `address_post_code` index; added `city_post_code`
+  and `city_name`.
+
+**Migration:** address keys are unchanged, but existing `Address` nodes keep
+stale `post_code` / `city` properties and have no `:IN_CITY` edge. Clear the
+graph and re-run your searches:
+
+```bash
+docker compose exec neo4j cypher-shell -u neo4j -p openabox-local "MATCH (n) DETACH DELETE n"
+```
+
+### Added
+- Cardboard-box visual identity: logo, SVG favicon, and a kraft-brown palette
+  over a white graph canvas, in both light and dark modes.
+- Saved queries for companies per city and post codes filed under several names.
+
+### Fixed
+- Address fields appeared in every search mode: `#address-fields` had a
+  `display` rule, which outranks the browser's `[hidden]` styling, so the
+  attribute had no effect. A global `[hidden] { display: none !important; }`
+  now keeps the attribute authoritative everywhere.
+- Address inputs have visible labels instead of placeholders truncated by a
+  cramped header.
+
 ## [0.1.0] — 2026-08-16
 
 First tagged release. Company lookup and graph exploration work end to end

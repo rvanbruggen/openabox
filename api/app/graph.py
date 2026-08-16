@@ -23,6 +23,8 @@ SCHEMA_STATEMENTS = [
     "FOR (e:Establishment) REQUIRE e.establishment_number IS UNIQUE",
     "CREATE CONSTRAINT address_key IF NOT EXISTS "
     "FOR (a:Address) REQUIRE a.key IS UNIQUE",
+    "CREATE CONSTRAINT city_key IF NOT EXISTS "
+    "FOR (c:City) REQUIRE c.key IS UNIQUE",
     "CREATE CONSTRAINT nace_key IF NOT EXISTS "
     "FOR (n:NaceCode) REQUIRE n.key IS UNIQUE",
     "CREATE CONSTRAINT form_code IF NOT EXISTS "
@@ -35,8 +37,11 @@ SCHEMA_STATEMENTS = [
     "FOR (p:Person) REQUIRE p.key IS UNIQUE",
     "CREATE INDEX company_hydrated IF NOT EXISTS "
     "FOR (c:Company) ON (c._hydrated)",
-    "CREATE INDEX address_post_code IF NOT EXISTS "
-    "FOR (a:Address) ON (a.post_code)",
+    # Post code and city moved from Address to City; drop the index that
+    # pointed at the property Address no longer carries.
+    "DROP INDEX address_post_code IF EXISTS",
+    "CREATE INDEX city_post_code IF NOT EXISTS FOR (c:City) ON (c.post_code)",
+    "CREATE INDEX city_name IF NOT EXISTS FOR (c:City) ON (c.name)",
     # Lets name search be answered from cache instead of spending API quota.
     "CREATE FULLTEXT INDEX company_names IF NOT EXISTS "
     "FOR (c:Company) ON EACH [c.denomination, c.commercial_name, c.abbreviation]",

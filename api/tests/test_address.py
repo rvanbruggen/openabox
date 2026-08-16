@@ -10,7 +10,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.address import address_key, normalise_number, normalise_street  # noqa: E402
+from app.address import (  # noqa: E402
+    address_key,
+    address_properties,
+    city_key,
+    normalise_number,
+    normalise_street,
+)
 
 
 def test_case_punctuation_and_accents_fold_together():
@@ -95,6 +101,52 @@ def test_sint_variants_fold():
     a = address_key({"street": "St.-Jansplein", "street_number": "1", "post_code": "2060"})
     b = address_key({"street": "Sint-Jansplein", "street_number": "1", "post_code": "2060"})
     assert a == b
+
+
+def test_one_postcode_with_different_names_is_one_city():
+    # Live data: 1040 is filed as both "Etterbeek" and "Brussel". Keying on
+    # the name would split one locality into two nodes.
+    a = city_key({"post_code": "1040", "city": "Etterbeek", "country_code": "BE"})
+    b = city_key({"post_code": "1040", "city": "Brussel", "country_code": "BE"})
+    assert a == b == "BE|1040"
+
+
+def test_one_name_across_postcodes_stays_separate():
+    # Live data: Antwerpen spans nine post codes. These are distinct postal
+    # areas and must not collapse onto one node.
+    keys = {
+        city_key({"post_code": pc, "city": "Antwerpen", "country_code": "BE"})
+        for pc in ["2000", "2018", "2100", "2170", "2610"]
+    }
+    assert len(keys) == 5, keys
+
+
+def test_city_key_separates_countries():
+    assert city_key({"post_code": "2411", "city": "Luxembourg", "country_code": "LU"}) == "LU|2411"
+    # Same digits in another country must not collide.
+    assert city_key({"post_code": "2411", "city": "Elsewhere", "country_code": "BE"}) == "BE|2411"
+
+
+def test_city_key_falls_back_to_name_without_postcode():
+    assert city_key({"city": "Hyderabad", "country_code": "IN"}) == "IN|hyderabad"
+    assert city_key({}) is None
+
+
+def test_address_no_longer_carries_postcode_or_city():
+    # They live on the City node now; keeping copies would let the two drift.
+    props = address_properties(
+        {"street": "Kerkstraat", "street_number": "1", "post_code": "9000", "city": "Gent"}
+    )
+    assert "post_code" not in props and "city" not in props
+    assert props["street"] == "Kerkstraat"
+
+
+def test_address_key_still_anchors_on_locality():
+    # The key keeps the locality inline so existing keys stay stable even
+    # though the properties moved.
+    assert address_key(
+        {"street": "Kerkstraat", "street_number": "1", "post_code": "9000", "city": "Gent"}
+    ) == "BE|9000|kerkstraat|1"
 
 
 if __name__ == "__main__":

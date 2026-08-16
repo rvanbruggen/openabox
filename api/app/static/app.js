@@ -6,22 +6,30 @@
  * runnable offline on a private Docker host.
  */
 
+/* Warm, kraft-leaning palette to match the chrome, while keeping the labels
+ * distinguishable from one another — City takes the one cool hue so the
+ * geographic anchor stands out against the browns. */
 const LABEL_STYLE = {
-  Company:            { color: '#4c8bf5', r: 20 },
-  Address:            { color: '#e0663a', r: 15 },
-  Establishment:      { color: '#c9a227', r: 11 },
-  NaceCode:           { color: '#3fa66a', r: 12 },
-  JuridicalForm:      { color: '#8b62c9', r: 12 },
-  JuridicalSituation: { color: '#6b7280', r: 10 },
-  Person:             { color: '#d1477a', r: 17 },
+  Company:            { color: '#c2703d', r: 20 },
+  Address:            { color: '#8b6f47', r: 15 },
+  City:               { color: '#4a7ba7', r: 17 },
+  Establishment:      { color: '#d9a441', r: 11 },
+  NaceCode:           { color: '#5f8a6a', r: 12 },
+  JuridicalForm:      { color: '#8a6a9e', r: 12 },
+  JuridicalSituation: { color: '#8a8178', r: 10 },
+  Person:             { color: '#b5527a', r: 17 },
 };
-const DEFAULT_STYLE = { color: '#8a94a6', r: 12 };
+const DEFAULT_STYLE = { color: '#9c8b76', r: 12 };
 
 const SAVED_QUERIES = [
   ['Companies sharing an address',
    'MATCH (a:Address)<-[:REGISTERED_AT]-(c:Company)\nWITH a, collect(c) AS cos WHERE size(cos) > 1\nRETURN a, cos'],
   ['Busiest addresses',
    'MATCH (a:Address)<-[:REGISTERED_AT]-(c:Company)\nRETURN a.full_address AS address, count(c) AS companies\nORDER BY companies DESC LIMIT 20'],
+  ['Companies per city',
+   'MATCH (ct:City)<-[:IN_CITY]-(:Address)<-[:REGISTERED_AT]-(c:Company)\nRETURN ct.post_code AS post_code, ct.name AS city,\n       ct.aliases AS also_filed_as, count(DISTINCT c) AS companies\nORDER BY companies DESC LIMIT 25'],
+  ['Post codes filed under several names',
+   'MATCH (ct:City) WHERE size(ct.aliases) > 1\nRETURN ct.key AS city_key, ct.post_code AS post_code, ct.aliases AS names'],
   ['Companies sharing an activity',
    'MATCH (c1:Company)-[:HAS_ACTIVITY]->(n:NaceCode)<-[:HAS_ACTIVITY]-(c2:Company)\nWHERE elementId(c1) < elementId(c2)\nRETURN n.code AS nace, n.description AS description,\n       collect(DISTINCT c1.denomination + " / " + c2.denomination)[0..5] AS pairs'],
   ['Ownership graph (once ingested)',
@@ -54,6 +62,7 @@ function caption(n) {
   switch (n.labels[0]) {
     case 'Company':            return p.denomination || p.cbe_number || 'Company';
     case 'Address':            return p.full_address || p.key || 'Address';
+    case 'City':               return [p.post_code, p.name].filter(Boolean).join(' ') || p.key;
     case 'Establishment':      return p.establishment_number || 'Establishment';
     case 'NaceCode':           return `${p.code} (${p.version || '?'})`;
     case 'JuridicalForm':      return p.short_label || p.label || p.code;
@@ -379,8 +388,9 @@ function showResults(data, context) {
     const c = r.company || r;
     const props = c.props || c;
     const cbe = props.cbe_number;
+    const city = r.city ? [r.city.post_code, r.city.name].filter(Boolean).join(' ') : '';
     const address = (r.address && r.address.full_address) ||
-                    (props.address && props.address.full_address) || '';
+                    (props.address && props.address.full_address) || city;
     const extra = r.nace_code ? `${r.nace_code} — ${truncate(r.nace_description, 46)}` : '';
     return `<div class="result" data-cbe="${cbe}">
       <div class="name">${props.denomination || cbe}</div>

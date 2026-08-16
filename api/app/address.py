@@ -157,12 +157,45 @@ def address_key(address: dict | None) -> str | None:
 
 
 def address_properties(address: dict) -> dict:
-    """Display properties stored alongside the key on the Address node."""
+    """Street-level properties for the Address node.
+
+    Post code and city deliberately live on the City node instead, reached via
+    :IN_CITY. `full_address` keeps the register's raw display string, which
+    still contains them verbatim.
+    """
     return {
         "street": address.get("street"),
         "street_number": address.get("street_number"),
-        "post_code": address.get("post_code"),
-        "city": address.get("city"),
         "country_code": address.get("country_code") or "BE",
         "full_address": address.get("full_address"),
+    }
+
+
+def city_key(address: dict | None) -> str | None:
+    """Key for the City node: country plus post code.
+
+    The post code is the stable identifier, verified against live register
+    data. One post code carries several names — 1040 is filed as both
+    "Etterbeek" and "Brussel" — so keying on the name would split one locality
+    in two. Conversely one name spans many post codes (Antwerpen has nine), so
+    keying on the name alone would merge distinct postal areas. Country is
+    included because the register holds non-Belgian addresses.
+
+    Falls back to the name when a record has no post code, which is rare but
+    happens for foreign entries.
+    """
+    if not address:
+        return None
+    country = (normalise_text(address.get("country_code")) or "be").upper()
+    anchor = normalise_text(address.get("post_code")) or normalise_text(address.get("city"))
+    if not anchor:
+        return None
+    return f"{country}|{anchor}"
+
+
+def city_properties(address: dict) -> dict:
+    return {
+        "post_code": address.get("post_code") or None,
+        "name": address.get("city") or None,
+        "country_code": address.get("country_code") or "BE",
     }

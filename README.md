@@ -7,7 +7,7 @@ for records already held.
 
 ## Version
 
-**0.1.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.2.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,10 +17,10 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | tag `v0.1.0` |
+| Git | annotated tag `v0.2.0` |
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.1.0`, that is the code answering.
+actually running — if the header says `v0.2.0`, that is the code answering.
 
 ## Status
 
@@ -59,7 +59,7 @@ python3 api/tests/test_address.py
 ## Graph model
 
 ```
-(Company)-[:REGISTERED_AT]->(Address)
+(Company)-[:REGISTERED_AT]->(Address)-[:IN_CITY]->(City)
 (Company)-[:HAS_ESTABLISHMENT]->(Establishment)-[:LOCATED_AT]->(Address)
 (Company)-[:HAS_ACTIVITY {classification, nace_version}]->(NaceCode)
 (Company)-[:HAS_FORM]->(JuridicalForm)
@@ -75,6 +75,20 @@ python3 api/tests/test_address.py
 share this building?" a graph traversal rather than a string comparison. The
 key is building-level — box/unit numbers live on the establishment — so
 companies in different units of the same building still meet on one node.
+
+**Cities are keyed by country + post code**, not by name, and `Address` no
+longer carries `post_code` or `city` at all. Both halves of that decision come
+from the live register:
+
+| Observation | Consequence |
+|---|---|
+| One post code carries several names — `1040` is filed as both *Etterbeek* and *Brussel* | Keying on the name would split one locality into two nodes |
+| One name spans many post codes — Antwerpen has nine | Keying on the name alone would merge distinct postal areas |
+| The register holds seven countries (BE, LU, IN, NL, DE, FR, UK) | Country has to be part of the key |
+
+Every spelling seen for a post code is kept in `City.aliases`, so a search for
+either *Etterbeek* or *Brussel* finds the same node. `Address.full_address`
+still holds the register's raw display string, post code and all.
 
 ## Data sources and their limits
 

@@ -13,7 +13,7 @@ import logging
 import neo4j
 
 from . import graph
-from .address import address_key, address_properties
+from .address import address_key, address_properties, city_key, city_properties
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,8 @@ async def ingest_company(payload: dict) -> str | None:
     address = payload.get("address") or {}
     addr_key = address_key(address)
     addr_props = address_properties(address) if addr_key else None
+    ct_key = city_key(address)
+    ct_props = city_properties(address) if ct_key else None
 
     nace = [
         {
@@ -111,6 +113,8 @@ async def ingest_company(payload: dict) -> str | None:
                 "date_striking_off": est.get("date_striking_off"),
                 "addr_key": address_key(est_addr),
                 "addr_props": address_properties(est_addr),
+                "city_key": city_key(est_addr),
+                "city_props": city_properties(est_addr),
             }
         )
 
@@ -119,6 +123,8 @@ async def ingest_company(payload: dict) -> str | None:
         "props": {k: v for k, v in props.items() if v is not None},
         "addr_key": addr_key,
         "addr_props": addr_props,
+        "city_key": ct_key,
+        "city_props": ct_props,
         "form_code": payload.get("juridical_form_code"),
         "form_label": payload.get("juridical_form"),
         "form_short": payload.get("juridical_form_short"),
@@ -155,6 +161,19 @@ async def _write_company(tx, p: dict) -> None:
             SET a += $addr_props, a._source = $source
             MERGE (c)-[r:REGISTERED_AT]->(a)
             SET r._fetched_at = datetime()
+            WITH a
+            WHERE $city_key IS NOT NULL
+            MERGE (ct:City {key: $city_key})
+            SET ct.post_code = coalesce(ct.post_code, $city_props.post_code),
+                ct.country_code = coalesce(ct.country_code, $city_props.country_code),
+                ct.name = coalesce(ct.name, $city_props.name),
+                ct.aliases = CASE
+                    WHEN $city_props.name IS NULL THEN coalesce(ct.aliases, [])
+                    WHEN $city_props.name IN coalesce(ct.aliases, []) THEN ct.aliases
+                    ELSE coalesce(ct.aliases, []) + $city_props.name
+                END,
+                ct._source = $source
+            MERGE (a)-[:IN_CITY]->(ct)
             """,
             **p,
         )
@@ -217,6 +236,19 @@ async def _write_company(tx, p: dict) -> None:
             MERGE (a:Address {key: e.addr_key})
             SET a += e.addr_props, a._source = $source
             MERGE (est)-[:LOCATED_AT]->(a)
+            WITH a, e
+            WHERE e.city_key IS NOT NULL
+            MERGE (ct:City {key: e.city_key})
+            SET ct.post_code = coalesce(ct.post_code, e.city_props.post_code),
+                ct.country_code = coalesce(ct.country_code, e.city_props.country_code),
+                ct.name = coalesce(ct.name, e.city_props.name),
+                ct.aliases = CASE
+                    WHEN e.city_props.name IS NULL THEN coalesce(ct.aliases, [])
+                    WHEN e.city_props.name IN coalesce(ct.aliases, []) THEN ct.aliases
+                    ELSE coalesce(ct.aliases, []) + e.city_props.name
+                END,
+                ct._source = $source
+            MERGE (a)-[:IN_CITY]->(ct)
             """,
             **p,
         )

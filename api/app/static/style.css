@@ -1,28 +1,30 @@
+/* Kraft-cardboard palette: warm brown chrome around a plain white canvas,
+ * so the graph itself stays the brightest thing on screen. */
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --border: #d8dde5;
-  --text: #1c2430;
-  --muted: #667085;
-  --accent: #2f6fd0;
-  --accent-soft: #e8f0fc;
-  --canvas: #fbfcfd;
-  --link: #b6bfcc;
+  --bg: #f7f2ea;
+  --panel: #fffdfa;
+  --border: #e4d8c5;
+  --text: #33281d;
+  --muted: #8b7a64;
+  --accent: #a05a2c;
+  --accent-soft: #f6ece0;
+  --canvas: #ffffff;
+  --link: #cdbfa8;
   --danger: #b42318;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #12151a;
-    --panel: #191d24;
-    --border: #2b323d;
-    --text: #e6e9ef;
-    --muted: #98a2b3;
-    --accent: #6ea8fe;
-    --accent-soft: #1d2a3d;
-    --canvas: #0e1116;
-    --link: #3a4453;
+    --bg: #191309;
+    --panel: #221a12;
+    --border: #3b2f22;
+    --text: #f0e7d9;
+    --muted: #a8967d;
+    --accent: #dc9a5c;
+    --accent-soft: #2c2117;
+    --canvas: #120d08;
+    --link: #4c3d2d;
     --danger: #f97066;
   }
 }
@@ -58,7 +60,14 @@ h1 {
   font-size: 16px;
   letter-spacing: .02em;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+
+.logo { display: block; flex: 0 0 auto; }
+.wordmark { font-weight: 600; }
+.wordmark strong { color: var(--accent); font-weight: 700; }
 
 .version {
   font: 10px var(--mono);

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="OpenABox">
+  <title>OpenABox</title>
+  <!-- An opening cardboard box: two flaps folded outward above a kraft body,
+       with the dark interior showing through the opening. -->
+  <path d="M16 12 L3.2 8.6 L5.8 4.2 L16 7.4 Z" fill="#d8b489"/>
+  <path d="M16 12 L28.8 8.6 L26.2 4.2 L16 7.4 Z" fill="#c08f5c"/>
+  <path d="M4.6 11.4 H27.4 V26.2 Q27.4 27.8 25.8 27.8 H6.2 Q4.6 27.8 4.6 26.2 Z" fill="#b8834f"/>
+  <path d="M4.6 11.4 H27.4 V15.2 H4.6 Z" fill="#5c3b1e" opacity="0.5"/>
+  <path d="M16 15.2 V27.8" stroke="#8a5f34" stroke-width="1.3"/>
+</svg>

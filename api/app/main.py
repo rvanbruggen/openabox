@@ -200,15 +200,20 @@ async def search_address(
         cached = await graph.run_read(
             """
             MATCH (a:Address)
-            WHERE ($post_code IS NULL OR a.post_code = $post_code)
-              AND ($city IS NULL OR toLower(a.city) CONTAINS toLower($city))
-              AND ($street_norm IS NULL OR a.key CONTAINS $street_norm)
+            WHERE ($street_norm IS NULL OR a.key CONTAINS $street_norm)
               AND ($house_number IS NULL OR a.street_number = $house_number)
+            OPTIONAL MATCH (a)-[:IN_CITY]->(ct:City)
+            WITH a, ct
+            // Match against every spelling seen for the locality: the register
+            // files one post code under several names.
+            WHERE ($post_code IS NULL OR ct.post_code = $post_code)
+              AND ($city IS NULL OR any(n IN coalesce(ct.aliases, [])
+                                        WHERE toLower(n) CONTAINS toLower($city)))
             MATCH (a)<-[:REGISTERED_AT|LOCATED_AT]-(x)
             OPTIONAL MATCH (x)<-[:HAS_ESTABLISHMENT]-(owner:Company)
-            WITH a, coalesce(owner, x) AS c
+            WITH a, ct, coalesce(owner, x) AS c
             WHERE c:Company
-            RETURN DISTINCT c AS company, a AS address
+            RETURN DISTINCT c AS company, a AS address, ct AS city
             ORDER BY c.denomination LIMIT 200
             """,
             street_norm=normalise_street(street) or None,
@@ -329,7 +334,8 @@ async def graph_for_company(cbe_number: str):
         // Co-located companies are the point of the graph, so pull them in
         // directly rather than making the user expand to find them.
         OPTIONAL MATCH p4 = (c)-[:REGISTERED_AT]->(:Address)<-[:REGISTERED_AT]-(:Company)
-        RETURN c, p1, p2, p3, p4
+        OPTIONAL MATCH p5 = (c)-[:REGISTERED_AT]->(:Address)-[:IN_CITY]->(:City)
+        RETURN c, p1, p2, p3, p4, p5
         """,
         cbe=cbe_number,
     )
