@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from . import config, graph, ingest
 from .address import address_key, normalise_street
 from .cbe_client import CBEClient, CBEError
+from .version import __version__
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenABox",
     description="Local Belgian company graph, backed by the CBE register and Neo4j.",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -70,6 +72,7 @@ async def health():
     )
     return {
         "status": "ok",
+        "version": __version__,
         "neo4j": counts[0] if counts else {},
         "cbe_api_key_configured": bool(config.cbe_api_key()),
         "rate_limit": _client().rate_limit,

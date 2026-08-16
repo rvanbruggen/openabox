@@ -596,6 +596,9 @@ async function refreshQuota() {
     const rl = health.rate_limit || {};
     const counts = health.neo4j || {};
     const remaining = rl['x-ratelimit-remaining'];
+    // Read the version from the server rather than hardcoding it here, so the
+    // UI cannot drift from the running backend.
+    document.getElementById('version').textContent = health.version ? `v${health.version}` : '';
     document.getElementById('quota').textContent =
       `${counts.companies ?? 0} companies · ${counts.addresses ?? 0} addresses` +
       (remaining ? ` · API ${remaining}/${rl['x-ratelimit-limit']}` : '');

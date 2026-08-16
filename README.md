@@ -5,6 +5,23 @@ comes from the CBE/KBO register via [cbeapi.be](https://cbeapi.be), is cached in
 a local Neo4j instance, and is explored from there — the API is not re-queried
 for records already held.
 
+## Version
+
+**0.1.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+
+The version is defined once, in [`api/app/version.py`](api/app/version.py), and
+everything else reads it from there:
+
+| Surface | How it gets the version |
+|---|---|
+| `GET /health` | `version` field |
+| `GET /docs` (OpenAPI) | FastAPI `version` |
+| Web UI header | fetched from `/health`, never hardcoded |
+| Git | tag `v0.1.0` |
+
+Nothing duplicates the string, so the UI cannot drift from the backend that is
+actually running — if the header says `v0.1.0`, that is the code answering.
+
 ## Status
 
 | Component | State |
@@ -101,3 +118,25 @@ genuinely has no establishments. TTL defaults to 90 days
 
 The Cypher endpoint runs queries in a **read transaction**, so read-only is
 enforced by Neo4j itself rather than by keyword blocklisting.
+
+## Releasing
+
+1. Bump `__version__` in [`api/app/version.py`](api/app/version.py).
+2. Add the release to [CHANGELOG.md](CHANGELOG.md).
+3. Commit, tag, and push both together:
+
+```bash
+git commit -am "Release vX.Y.Z" && git tag vX.Y.Z && git push origin main --follow-tags
+```
+
+Never push a version bump without its tag, and never tag without pushing —
+otherwise the running container reports a version that no commit corresponds to.
+
+Deploying a release on the Docker host:
+
+```bash
+cd openabox && git pull && docker compose restart api
+```
+
+Application code is bind-mounted, so a restart is enough; only dependency
+changes in `requirements.txt` need `docker compose up -d --build`.

@@ -53,6 +53,14 @@ h1 {
   margin: 0;
   font-size: 16px;
   letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+.version {
+  font: 10px var(--mono);
+  font-weight: 400;
+  color: var(--muted);
+  vertical-align: 2px;
 }
 
 #search-form { display: flex; gap: 8px; align-items: center; flex: 1; max-width: 640px; }
