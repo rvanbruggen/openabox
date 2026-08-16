@@ -140,6 +140,31 @@ class CBSOClient:
             )
         return response.content
 
+    async def fetch_csv(self, deposit_id: str) -> bytes:
+        """Download one filing's flattened rubriek-code CSV.
+
+        Only the Consult portal produces this; the official web services return
+        XBRL/JSON/PDF, so a subscribed client falls back to the public route
+        for this one call rather than pretending the format does not exist.
+        """
+        path = f"/api/external/broker/public/deposits/consult/csv/{deposit_id}"
+        if not self.official:
+            return (await self._get(path, "*/*")).content
+
+        async with httpx.AsyncClient(
+            base_url=config.CBSO_CONSULT_URL,
+            timeout=60.0,
+            follow_redirects=True,
+            headers={"User-Agent": _BROWSER_UA, "Accept": "*/*"},
+        ) as client:
+            response = await client.get(path)
+            if response.status_code >= 400:
+                raise CBSOError(
+                    f"CBSO CSV error {response.status_code}",
+                    status_code=response.status_code,
+                )
+            return response.content
+
     async def latest_parsable_deposit(self, cbe_number: str) -> dict | None:
         """The most recent filing that actually has structured data in it.
 

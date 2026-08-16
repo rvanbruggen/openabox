@@ -195,6 +195,16 @@ def test_person_key_falls_back_to_the_company_when_no_address():
     assert a[1] == "company"
 
 
+def test_person_key_survives_filers_swapping_the_name_fields():
+    """Observed in live data: Korys NV filed Willem Colruyt as surname
+    "Willem", first name "Colruyt", while Achilles Dott files surnames in the
+    surname field. Without an order-insensitive key the same director becomes
+    two nodes and the cross-company link disappears."""
+    filed_correctly = person_key("Colruyt", "Willem", {"post_code": "1500"}, "0400378485")
+    filed_swapped = person_key("Willem", "Colruyt", {"post_code": "1500"}, "0844198918")
+    assert filed_correctly == filed_swapped
+
+
 def test_person_key_needs_at_least_one_name_part():
     assert person_key(None, None, {"post_code": "1000"}, "0400378485") is None
 

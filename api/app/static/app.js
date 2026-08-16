@@ -18,8 +18,16 @@ const LABEL_STYLE = {
   JuridicalForm:      { color: '#8a6a9e', r: 12 },
   JuridicalSituation: { color: '#8a8178', r: 10 },
   Person:             { color: '#b5527a', r: 17 },
+  ExternalEntity:     { color: '#7d5f9e', r: 17 },
+  Deposit:            { color: '#6b8f9e', r: 11 },
 };
 const DEFAULT_STYLE = { color: '#9c8b76', r: 12 };
+
+/* Edges that describe ownership or control rather than structure. Drawn with
+ * emphasis, and captioned with the percentage when the filing gave one. */
+const OWNERSHIP_EDGES = new Set([
+  'SHAREHOLDER_OF', 'HOLDS_PARTICIPATION', 'DIRECTOR_OF', 'CONSOLIDATED_BY',
+]);
 
 const SAVED_QUERIES = [
   ['Companies sharing an address',
@@ -32,8 +40,14 @@ const SAVED_QUERIES = [
    'MATCH (ct:City) WHERE size(ct.aliases) > 1\nRETURN ct.key AS city_key, ct.post_code AS post_code, ct.aliases AS names'],
   ['Companies sharing an activity',
    'MATCH (c1:Company)-[:HAS_ACTIVITY]->(n:NaceCode)<-[:HAS_ACTIVITY]-(c2:Company)\nWHERE elementId(c1) < elementId(c2)\nRETURN n.code AS nace, n.description AS description,\n       collect(DISTINCT c1.denomination + " / " + c2.denomination)[0..5] AS pairs'],
-  ['Ownership graph (once ingested)',
-   'MATCH p = (:Company)-[:HOLDS_PARTICIPATION|FOUNDED|OFFICER_OF]-()\nRETURN p LIMIT 100'],
+  ['Ownership graph',
+   'MATCH p = ()-[:SHAREHOLDER_OF|HOLDS_PARTICIPATION|CONSOLIDATED_BY]->()\nRETURN p LIMIT 100'],
+  ['Controlling shareholders (>25%)',
+   'MATCH (h)-[s:SHAREHOLDER_OF]->(c:Company)\nWHERE s.pct > 25 AND h <> c\nRETURN coalesce(h.denomination, h.name) AS owner,\n       c.denomination AS company, s.pct AS pct, s.as_of AS as_of\nORDER BY pct DESC LIMIT 50'],
+  ['Companies sharing a shareholder',
+   'MATCH (h)-[s1:SHAREHOLDER_OF]->(a:Company), (h)-[s2:SHAREHOLDER_OF]->(b:Company)\nWHERE elementId(a) < elementId(b) AND h <> a AND h <> b\nRETURN coalesce(h.denomination, h.name) AS shared_owner,\n       a.denomination AS company_a, s1.pct AS pct_a,\n       b.denomination AS company_b, s2.pct AS pct_b\nORDER BY shared_owner LIMIT 50'],
+  ['People behind a company (ownership chain)',
+   'MATCH path = (p:Person)-[:SHAREHOLDER_OF*1..4]->(c:Company)\nWHERE all(r IN relationships(path) WHERE startNode(r) <> endNode(r))\nRETURN p.name AS person, c.denomination AS company,\n       [r IN relationships(path) | r.pct] AS pct_chain,\n       length(path) AS hops\nORDER BY hops DESC LIMIT 50'],
   ['Cache provenance',
    'MATCH (c:Company)\nRETURN c.denomination AS company, c._source AS source,\n       c._fetched_at AS fetched, c._hydrated AS hydrated\nORDER BY fetched DESC'],
 ];
@@ -55,11 +69,18 @@ const tooltip   = document.getElementById('tooltip');
 
 /* ---------- helpers ---------- */
 
-const styleFor = (n) => LABEL_STYLE[n.labels[0]] || DEFAULT_STYLE;
+/* Labels arrive sorted, so a foreign shareholder (:Company:ExternalEntity)
+ * would otherwise render as a plain Company. The more specific label wins, so
+ * "this owner is not in the Belgian register" is visible on the canvas. */
+function primaryLabel(n) {
+  return n.labels.find((l) => l !== 'Company' && LABEL_STYLE[l]) || n.labels[0];
+}
+
+const styleFor = (n) => LABEL_STYLE[primaryLabel(n)] || DEFAULT_STYLE;
 
 function caption(n) {
   const p = n.props;
-  switch (n.labels[0]) {
+  switch (primaryLabel(n)) {
     case 'Company':            return p.denomination || p.cbe_number || 'Company';
     case 'Address':            return p.full_address || p.key || 'Address';
     case 'City':               return [p.post_code, p.name].filter(Boolean).join(' ') || p.key;
@@ -68,6 +89,8 @@ function caption(n) {
     case 'JuridicalForm':      return p.short_label || p.label || p.code;
     case 'JuridicalSituation': return p.label || p.code;
     case 'Person':             return p.name || 'Person';
+    case 'ExternalEntity':     return p.denomination || p.identifier || 'Foreign entity';
+    case 'Deposit':            return `Filing ${String(p.period_end || '').slice(0, 10)}`;
     default:                   return n.labels[0] || 'Node';
   }
 }
@@ -105,8 +128,9 @@ function mergeGraph(payload) {
 
   for (const raw of payload.relationships || []) {
     if (state.links.has(raw._id)) continue;
+    const { _type, _id, _rel_type, _start, _end, ...props } = raw;
     state.links.set(raw._id, {
-      id: raw._id, type: raw._rel_type, from: raw._start, to: raw._end,
+      id: raw._id, type: raw._rel_type, from: raw._start, to: raw._end, props,
     });
   }
 
@@ -177,21 +201,46 @@ function loop() {
 
 /* ---------- rendering ---------- */
 
+/* A stake's weight, not its exact number: >50% is control, 25-50% is a
+ * blocking minority, below that is a holding. Those are the thresholds that
+ * actually change what a shareholding *means*. */
+function stakeClass(link) {
+  const pct = link.props?.pct;
+  if (typeof pct !== 'number') return '';
+  if (pct > 50) return 'stake-major';
+  if (pct >= 25) return 'stake-mid';
+  return '';
+}
+
+/* Ownership edges are captioned with the percentage when the filing gave one,
+ * because "64.4%" is the answer and "SHAREHOLDER_OF" is only the question. */
+function linkCaption(link) {
+  if (!OWNERSHIP_EDGES.has(link.type)) return link.type;
+  const { pct, role_label } = link.props || {};
+  if (typeof pct === 'number') return `${pct.toFixed(2).replace(/\.?0+$/, '')}%`;
+  if (link.type === 'DIRECTOR_OF') return role_label || 'director';
+  if (link.type === 'CONSOLIDATED_BY') return 'consolidated by';
+  return link.type.replace(/_/g, ' ').toLowerCase();
+}
+
 function render() {
   linkLayer.replaceChildren();
   nodeLayer.replaceChildren();
 
   for (const link of state.links.values()) {
     if (!state.nodes.has(link.from) || !state.nodes.has(link.to)) continue;
+    const owned = OWNERSHIP_EDGES.has(link.type);
+
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('class', 'link');
+    line.setAttribute('class', `link${owned ? ` ${stakeClass(link)} rel-${link.type}` : ''}`);
     line.dataset.id = link.id;
+    if (owned) line.setAttribute('marker-end', `url(#arrow-${link.type})`);
     linkLayer.append(line);
 
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('class', 'link-label');
+    label.setAttribute('class', `link-label${owned ? ` rel-${link.type}` : ''}`);
     label.dataset.id = link.id;
-    label.textContent = link.type;
+    label.textContent = linkCaption(link);
     linkLayer.append(label);
   }
 
@@ -227,8 +276,18 @@ function paint() {
     const a = state.nodes.get(link.from), b = state.nodes.get(link.to);
     if (!a || !b) continue;
     if (el.tagName === 'line') {
+      let [x2, y2] = [b.x, b.y];
+      if (OWNERSHIP_EDGES.has(link.type)) {
+        // Stop the line at the target's edge so the arrowhead sits outside the
+        // circle instead of being painted underneath it.
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const gap = styleFor(b).r + 5;
+        x2 = b.x - (dx / dist) * gap;
+        y2 = b.y - (dy / dist) * gap;
+      }
       el.setAttribute('x1', a.x); el.setAttribute('y1', a.y);
-      el.setAttribute('x2', b.x); el.setAttribute('y2', b.y);
+      el.setAttribute('x2', x2); el.setAttribute('y2', y2);
     } else {
       el.setAttribute('x', (a.x + b.x) / 2);
       el.setAttribute('y', (a.y + b.y) / 2 - 3);
@@ -244,7 +303,7 @@ function paint() {
 
 function renderLegend() {
   const present = new Set();
-  for (const n of state.nodes.values()) present.add(n.labels[0]);
+  for (const n of state.nodes.values()) present.add(primaryLabel(n));
   const legend = document.getElementById('legend');
   legend.replaceChildren();
   legend.hidden = present.size === 0;
@@ -254,6 +313,26 @@ function renderLegend() {
     row.innerHTML = `<span class="dot" style="background:${style.color}"></span>${label}`;
     legend.append(row);
   }
+
+  // Only explain the ownership colours once there are ownership edges to
+  // explain — otherwise the legend describes a graph the user cannot see.
+  const edges = new Set();
+  for (const l of state.links.values()) if (OWNERSHIP_EDGES.has(l.type)) edges.add(l.type);
+  if (!edges.size) return;
+  const EDGE_KEY = {
+    SHAREHOLDER_OF:      ['#c2703d', 'solid',  'owns'],
+    HOLDS_PARTICIPATION: ['#5f8a6a', 'solid',  'holds stake in'],
+    DIRECTOR_OF:         ['#8a6a9e', 'dashed', 'directs'],
+    CONSOLIDATED_BY:     ['#4a7ba7', 'dotted', 'consolidated by'],
+  };
+  const box = document.createElement('div');
+  box.className = 'edge-key';
+  box.innerHTML = [...edges].sort().map((t) => {
+    const [color, style, text] = EDGE_KEY[t];
+    return `<div><span class="bar" style="border-top-color:${color};` +
+           `border-top-style:${style}"></span>${text}</div>`;
+  }).join('') + '<div style="opacity:.7">thicker line = larger stake</div>';
+  legend.append(box);
 }
 
 /* ---------- canvas interaction ---------- */
@@ -346,6 +425,303 @@ svg.addEventListener('mousemove', (evt) => {
 });
 
 svg.addEventListener('mouseleave', () => { tooltip.hidden = true; });
+
+/* ---------- shareholder investigation ---------- */
+
+const nodeMenu = document.getElementById('node-menu');
+
+function closeMenu() { nodeMenu.hidden = true; }
+window.addEventListener('click', closeMenu);
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+svg.addEventListener('wheel', closeMenu, { passive: true });
+
+svg.addEventListener('contextmenu', (evt) => {
+  const g = evt.target.closest('.node');
+  if (!g) return closeMenu();
+  const node = state.nodes.get(g.dataset.id);
+  if (!node) return;
+  evt.preventDefault();
+
+  const cbe = node.props.cbe_number;
+  const isCompany = node.labels.includes('Company');
+  // A foreign shareholder has no CBE number, so there is nothing to look up at
+  // the NBB. Say so rather than offering an action that cannot work.
+  const canInvestigate = isCompany && Boolean(cbe);
+
+  nodeMenu.innerHTML = `
+    <div class="menu-title">${caption(node)}</div>
+    <button id="menu-investigate" ${canInvestigate ? '' : 'disabled'}>
+      Investigate shareholders (NBB)
+    </button>
+    <button id="menu-financials" ${canInvestigate ? '' : 'disabled'}>
+      Financials over time
+    </button>
+    <button id="menu-expand">Expand neighbours</button>
+    ${canInvestigate ? '' :
+      `<div class="menu-note">${isCompany
+        ? 'No CBE number — not in the Belgian register.'
+        : 'Only companies file annual accounts.'}</div>`}`;
+
+  const rect = svg.getBoundingClientRect();
+  nodeMenu.style.left = Math.min(evt.clientX - rect.left, rect.width - 220) + 'px';
+  nodeMenu.style.top = Math.min(evt.clientY - rect.top, rect.height - 90) + 'px';
+  nodeMenu.hidden = false;
+
+  document.getElementById('menu-expand').addEventListener('click', () => {
+    closeMenu();
+    expand(node);
+  });
+  if (canInvestigate) {
+    document.getElementById('menu-investigate')
+      .addEventListener('click', () => { closeMenu(); investigate(node, cbe); });
+    document.getElementById('menu-financials')
+      .addEventListener('click', () => { closeMenu(); showFinancials(node, cbe); });
+  }
+});
+
+// Clicking inside the menu must not bubble to the window handler that closes it
+// before the button's own listener runs.
+nodeMenu.addEventListener('click', (evt) => evt.stopPropagation());
+
+/* Fetch the company's annual accounts from the NBB, ingest them, and pull the
+ * resulting ownership subgraph onto the canvas. */
+async function investigate(node, cbe) {
+  const details = document.getElementById('details');
+  details.innerHTML =
+    `<div class="source-tag">NBB · Central Balance Sheet Office</div>
+     <div class="detail-title">${caption(node)}</div>
+     <p class="empty">Fetching the latest annual accounts…</p>`;
+
+  let data;
+  try {
+    data = await api(`/api/company/${cbe}/shareholders`);
+  } catch (err) {
+    details.innerHTML =
+      `<div class="source-tag">NBB · failed</div>
+       <div class="detail-title">${caption(node)}</div>
+       <p class="empty">${err.message}</p>`;
+    return;
+  }
+
+  try {
+    mergeGraph(await api(`/api/graph/company/${cbe}/ownership`));
+  } catch (err) {
+    console.warn('ownership graph failed', err);
+  }
+  showInvestigation(node, data);
+  // The filings are already being read for ownership, so the figures come at
+  // no extra round trip to the NBB beyond the CSV per year.
+  showFinancials(node, cbe);
+}
+
+/* ---------- financials panel ---------- */
+
+const finPanel = document.getElementById('financials');
+document.getElementById('fin-close')
+  .addEventListener('click', () => { finPanel.hidden = true; });
+
+/* Compact money: filings run from a few thousand to billions, and raw digits
+ * at those magnitudes are unreadable side by side. */
+function money(v) {
+  if (typeof v !== 'number') return '—';
+  const abs = Math.abs(v);
+  if (abs >= 1e9) return (v / 1e9).toFixed(2) + 'bn';
+  if (abs >= 1e6) return (v / 1e6).toFixed(1) + 'm';
+  if (abs >= 1e3) return Math.round(v / 1e3) + 'k';
+  return Math.round(v).toString();
+}
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* Grouped bar chart with a real zero line, so losses point downwards instead
+ * of being hidden by an axis that starts at the minimum. */
+function barChart(rows, seriesDefs, { height = 120 } = {}) {
+  const W = 320, H = height, padL = 4, padB = 16, padT = 12;
+  const values = rows.flatMap((r) => seriesDefs.map((s) => r[s.key])
+    .filter((v) => typeof v === 'number'));
+  if (!values.length) return '<p class="empty">Not disclosed in these filings.</p>';
+
+  const max = Math.max(0, ...values), min = Math.min(0, ...values);
+  const span = (max - min) || 1;
+  const plotH = H - padB - padT;
+  const y = (v) => padT + (max - v) / span * plotH;
+  const zeroY = y(0);
+  const groupW = (W - padL) / rows.length;
+  const barW = Math.min(18, (groupW - 8) / seriesDefs.length);
+
+  const bars = rows.map((r, i) => {
+    const gx = padL + i * groupW + (groupW - barW * seriesDefs.length) / 2;
+    return seriesDefs.map((s, j) => {
+      const v = r[s.key];
+      if (typeof v !== 'number') return '';
+      const top = Math.min(y(v), zeroY), h = Math.max(1, Math.abs(y(v) - zeroY));
+      return `<rect x="${gx + j * barW}" y="${top}" width="${barW - 2}" height="${h}"
+                    fill="${s.color}" rx="1"><title>${esc(s.label)} ${r.year}: ${money(v)}</title></rect>
+              <text class="val" x="${gx + j * barW + (barW - 2) / 2}"
+                    y="${v >= 0 ? top - 2 : top + h + 7}" text-anchor="middle">${money(v)}</text>`;
+    }).join('');
+  }).join('');
+
+  const labels = rows.map((r, i) =>
+    `<text x="${padL + i * groupW + groupW / 2}" y="${H - 3}" text-anchor="middle">${esc(r.year)}</text>`
+  ).join('');
+
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+    <line class="zero" x1="${padL}" y1="${zeroY}" x2="${W}" y2="${zeroY}"></line>
+    ${bars}${labels}</svg>`;
+}
+
+/* Stacked equity-vs-liabilities: the shape of the bar *is* the answer to
+ * "how much of this is owned rather than borrowed". */
+function capitalChart(rows) {
+  const W = 320, H = 130, padB = 16, padT = 14, padL = 4;
+  const totals = rows.map((r) => (r.equity || 0) + (r.liabilities || 0));
+  const max = Math.max(...totals, 1);
+  const plotH = H - padB - padT;
+  const groupW = (W - padL) / rows.length;
+  const barW = Math.min(30, groupW - 10);
+
+  const bars = rows.map((r, i) => {
+    const x = padL + i * groupW + (groupW - barW) / 2;
+    const eq = Math.max(0, r.equity || 0), li = Math.max(0, r.liabilities || 0);
+    const eqH = eq / max * plotH, liH = li / max * plotH;
+    const base = padT + plotH;
+    return `
+      <rect x="${x}" y="${base - liH}" width="${barW}" height="${liH}" fill="#b08968" rx="1">
+        <title>Liabilities ${r.year}: ${money(li)}</title></rect>
+      <rect x="${x}" y="${base - liH - eqH}" width="${barW}" height="${eqH}" fill="#5f8a6a" rx="1">
+        <title>Equity ${r.year}: ${money(eq)}</title></rect>
+      <text class="val" x="${x + barW / 2}" y="${base - liH - eqH - 3}" text-anchor="middle">
+        ${typeof r.equity_ratio === 'number' ? r.equity_ratio.toFixed(0) + '%' : ''}</text>
+      <text x="${x + barW / 2}" y="${H - 3}" text-anchor="middle">${esc(r.year)}</text>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${bars}</svg>`;
+}
+
+function finKey(items) {
+  return `<div class="fin-key">${items.map(([c, l]) =>
+    `<span><i style="background:${c}"></i>${esc(l)}</span>`).join('')}</div>`;
+}
+
+async function showFinancials(node, cbe) {
+  finPanel.hidden = false;
+  document.getElementById('fin-title').textContent = caption(node);
+  const body = document.getElementById('fin-body');
+  body.innerHTML = '<p class="empty">Fetching filed accounts from the NBB…</p>';
+
+  let data;
+  try {
+    data = await api(`/api/company/${cbe}/financials?years=8`);
+  } catch (err) {
+    body.innerHTML = `<p class="empty">${esc(err.message)}</p>`;
+    return;
+  }
+
+  const rows = data.series || [];
+  if (!rows.length) {
+    body.innerHTML =
+      '<p class="empty">No machine-readable filings. Older accounts exist only ' +
+      'as scanned images, which carry no extractable figures.</p>';
+    return;
+  }
+
+  // Turnover is absent from abbreviated and micro filings. Saying so is the
+  // difference between "this company shrank" and "this figure is not public".
+  const missingTurnover = rows.some((r) => typeof r.turnover !== 'number');
+
+  body.innerHTML = `
+    <div class="fin-chart">
+      <h4>Turnover and result</h4>
+      <div class="sub">${rows[0].year}–${rows[rows.length - 1].year} · as filed</div>
+      ${finKey([['#c2703d', 'Turnover'], ['#5f8a6a', 'Result for the period']])}
+      ${barChart(rows, [
+        { key: 'turnover', label: 'Turnover', color: '#c2703d' },
+        { key: 'result', label: 'Result', color: '#5f8a6a' },
+      ])}
+      ${missingTurnover ? '<div class="sub">Years without a turnover bar filed an ' +
+        'abbreviated or micro scheme, which does not disclose it.</div>' : ''}
+    </div>
+
+    <div class="fin-chart">
+      <h4>Capital structure</h4>
+      <div class="sub">Equity vs liabilities · % is the equity ratio</div>
+      ${finKey([['#5f8a6a', 'Equity (own)'], ['#b08968', 'Liabilities (third-party)']])}
+      ${capitalChart(rows)}
+    </div>
+
+    <div class="fin-chart">
+      <h4>Operating result</h4>
+      ${barChart(rows, [{ key: 'operating_result', label: 'Operating result', color: '#8a6a9e' }],
+                 { height: 100 })}
+    </div>
+
+    <table class="fin-table">
+      <thead><tr><th>Year</th><th>Equity</th><th>Assets</th><th>Result</th><th>FTE</th></tr></thead>
+      <tbody>${rows.slice().reverse().map((r) => `
+        <tr>
+          <td>${esc(r.year)}</td>
+          <td>${money(r.equity)}</td>
+          <td>${money(r.total_assets)}</td>
+          <td class="${r.result < 0 ? 'neg' : ''}">${money(r.result)}</td>
+          <td>${typeof r.employees_fte === 'number' ? r.employees_fte.toFixed(0) : '—'}</td>
+        </tr>`).join('')}</tbody>
+    </table>
+    <p class="menu-note">Source: annual accounts filed with the NBB
+      (${esc(rows.map((r) => r.model_id).filter((v, i, a) => a.indexOf(v) === i).join(', '))}).
+      Figures are as filed and not restated.</p>`;
+}
+
+function partyRows(parties, emptyText) {
+  if (!parties || !parties.length) return `<p class="empty">${emptyText}</p>`;
+  return parties.map((p) => {
+    const pct = typeof p.pct === 'number' ? `${p.pct}%` : '';
+    const meta = [
+      p.cbe_number || p.identifier || (p.kind === 'person' ? 'natural person' : ''),
+      p.shares ? `${p.shares.toLocaleString()} shares` : '',
+      p.role_label || '',
+      p.represented_by ? `rep. ${p.represented_by.join(', ')}` : '',
+    ].filter(Boolean).join(' · ');
+    // Only a party with a CBE number can be loaded; the rest are terminal.
+    return `<div class="result${p.cbe_number ? ' occupant' : ''}"
+                 ${p.cbe_number ? `data-cbe="${p.cbe_number}"` : ''}>
+      <div class="name">${p.name}${pct ? ` <span class="count">${pct}</span>` : ''}</div>
+      ${meta ? `<div class="meta">${meta}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function showInvestigation(node, data) {
+  const details = document.getElementById('details');
+  const d = data.deposit;
+
+  if (!d) {
+    details.innerHTML =
+      `<div class="source-tag">${data.source}</div>
+       <div class="detail-title">${caption(node)}</div>
+       <p class="empty">${data.note || 'No filing found.'}</p>`;
+    return;
+  }
+
+  const filed = String(d.period_end || '').slice(0, 10);
+  details.innerHTML = `
+    <div class="source-tag">${data.source} · ${d.model_id} · year end ${filed}</div>
+    <div class="detail-title">${caption(node)}</div>
+    <h3 class="occupants-heading">Shareholders
+      <span class="count">${(data.shareholders || []).length}</span></h3>
+    ${partyRows(data.shareholders, 'The filing names no shareholders.')}
+    <h3 class="occupants-heading">Directors
+      <span class="count">${(data.directors || []).length}</span></h3>
+    ${partyRows(data.directors, 'The filing names no directors.')}
+    <h3 class="occupants-heading">Holds stakes in
+      <span class="count">${(data.participations || []).length}</span></h3>
+    ${partyRows(data.participations, 'No participations disclosed.')}
+    <p class="menu-note">Percentages and share counts are as filed for the year
+      ending ${filed} — not necessarily today's ownership.</p>`;
+
+  wireOccupants(details);
+}
 
 async function expand(node) {
   try {

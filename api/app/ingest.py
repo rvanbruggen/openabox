@@ -539,6 +539,44 @@ async def _write_deposit(tx, p: dict, batches: dict) -> None:
             )
 
 
+async def ingest_financials(cbe_number: str, deposit: dict, metrics: dict) -> None:
+    """Attach one filing's key figures to its Deposit node.
+
+    Metrics live on the Deposit rather than the Company because they belong to
+    a period, not to the company as it stands today — which is what makes a
+    multi-year series a matter of reading several Deposit nodes rather than
+    keeping a parallel history somewhere else.
+    """
+    await graph.run_write(
+        """
+        MERGE (c:Company {cbe_number: $cbe_number})
+        ON CREATE SET c._hydrated = false, c._source = $source
+        MERGE (d:Deposit {id: $deposit.id})
+        SET d += $deposit,
+            d += $metrics,
+            d._source = $source,
+            d._financials_fetched_at = datetime()
+        MERGE (c)-[:FILED]->(d)
+        """,
+        cbe_number=cbe_number,
+        deposit={k: v for k, v in deposit.items() if v is not None},
+        metrics={k: v for k, v in metrics.items() if v is not None},
+        source=CBSO_SOURCE,
+    )
+
+
+async def get_cached_financials(cbe_number: str) -> list[dict]:
+    """Every filing we already hold figures for, oldest first."""
+    return await graph.run_read(
+        """
+        MATCH (:Company {cbe_number: $cbe_number})-[:FILED]->(d:Deposit)
+        WHERE d._financials_fetched_at IS NOT NULL
+        RETURN d AS deposit ORDER BY d.period_end
+        """,
+        cbe_number=cbe_number,
+    )
+
+
 async def get_cached_deposit(cbe_number: str, ttl_days: int) -> dict | None:
     """Return the ownership already held for a company, if still within TTL."""
     rows = await graph.run_read(

@@ -3,6 +3,70 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.5.0] — 2026-08-16
+
+### Added
+- **Shareholders, directors and participations, from the NBB.** The CBE register
+  has none of this; the annual accounts filed with the National Bank's Central
+  Balance Sheet Office have all of it, as structured XBRL.
+  `GET /api/company/{cbe}/shareholders` fetches a company's latest filing and
+  writes `SHAREHOLDER_OF`, `DIRECTOR_OF`, `HOLDS_PARTICIPATION`,
+  `CONSOLIDATED_BY` and `AUDITED_BY` edges. Legal persons carry their CBE
+  number in the filing, so they join straight onto existing `Company` nodes —
+  no name matching. Parties not already known are created unhydrated, which is
+  how the graph grows past the companies explicitly searched for.
+- **Right-click investigation in the UI.** Right-click any company node for
+  *Investigate shareholders*, *Financials over time*, or *Expand neighbours*.
+- **Ownership rendering.** Ownership edges carry direction arrows and are
+  captioned with the percentage instead of the relationship name. Ownership is
+  solid, control is dashed, and thicker lines mean larger stakes.
+- **Financial history panel.** `GET /api/company/{cbe}/financials` returns a
+  per-year series — turnover, result, operating result, equity, liabilities,
+  total assets, FTE — shown as charts in a right-hand panel, including equity
+  vs liabilities with the equity ratio.
+- `GET /api/graph/company/{cbe}/ownership` returns just the ownership
+  neighbourhood, so an investigation adds that and not the whole graph.
+- `Deposit` and `ExternalEntity` node types, with constraints. Every ownership
+  edge records the filing it came from.
+
+### Fixed
+- **Share counts were being zeroed.** Filings report voting rights twice on the
+  same axis, split between rights linked to securities and rights not linked;
+  the second is almost always 0. Reading whichever fact arrived last silently
+  set every shareholding to zero.
+- **Natural persons were splitting into two nodes.** Filers disagree about
+  which name field is which — Achilles Dott files surnames in the surname
+  dimension, Korys NV filed Willem Colruyt as surname "Willem", first name
+  "Colruyt". Person keys now sort the name parts, so one director stays one
+  node. This bug shipped in 0.4.0; graphs built with that version should
+  re-ingest.
+- Treasury shares make a company its own shareholder, which sent
+  variable-length ownership queries round in circles and reported the same
+  owner at several depths. Self-loops are now excluded from path traversals.
+- `/api/company/{cbe}/connections` was querying edge types that never existed
+  (`OFFICER_OF`, `FOUNDED`) and so always returned nothing.
+
+### Notes
+- **0.4.0 shipped part of this feature undocumented.** The shareholder backend
+  was mid-development when that release was cut, so `identity.py`, `ingest.py`,
+  `main.py`, `graph.py` and `test_xbrl.py` went out with it — including the
+  person-key bug fixed above. 0.4.0's changelog describes only the pagination
+  fix. Nothing in 0.4.0 was broken, but it was not what the tag claimed.
+- Rubriek codes are **not comparable across filing models**: `9900` is unused
+  in the full scheme and means *gross margin* in the abbreviated one, so it is
+  never read as the operating result. Only `9901` is.
+- Metrics absent from a filing stay absent rather than becoming 0 — abbreviated
+  and micro filings do not disclose turnover, and capital-less BVs have no
+  capital code. A zero would plot as a real collapse.
+- Shareholder disclosure is **not** limited to listed companies, which is what
+  this project assumed and had wrong. But coverage is genuinely uneven: Korys
+  NV's filing omits the shareholder section entirely. How often the fields are
+  populated across a random sample of Belgian filers is still unmeasured — see
+  [shareholders.md](shareholders.md).
+- The public Consult portal is used without credentials and its terms rule out
+  systematic downloading, so ingestion is strictly cache-first. Setting
+  `CBSO_SUBSCRIPTION_KEY` switches to the official (free) web services.
+
 ## [0.4.0] — 2026-08-16
 
 ### Fixed

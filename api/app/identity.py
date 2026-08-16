@@ -35,16 +35,26 @@ def person_key(
     The basis is returned so the graph can record how much to trust the key, and
     so the UI can offer "these may be the same person" as a suggestion instead
     of doing it silently.
+
+    The two name parts are **sorted** into the key. Filers do not agree on which
+    field is which: Achilles Dott files surnames in the surname dimension, while
+    Korys NV filed Willem Colruyt as surname "Willem", first name "Colruyt".
+    Sorting makes both spellings collide on one node instead of silently
+    creating two people. The cost is that a genuine "Thomas James" and "James
+    Thomas" would merge — rare, and much less damaging than splitting one
+    director across every company that files their name the other way round.
+    The display name keeps the filing's own order.
     """
     last = normalise_text(last_name)
     first = normalise_text(first_name)
     if not last and not first:
         return None
+    name = "|".join(sorted(p for p in (last, first) if p))
 
     post_code = normalise_text((address or {}).get("post_code"))
     if post_code:
-        return f"{last}|{first}|{post_code}", "post_code"
-    return f"{last}|{first}|cbe:{fallback}", "company"
+        return f"{name}|{post_code}", "post_code"
+    return f"{name}|cbe:{fallback}", "company"
 
 
 def external_key(

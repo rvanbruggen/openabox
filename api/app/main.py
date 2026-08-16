@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, graph, ingest, xbrl
+from . import cbso_client, config, financials, graph, ingest, xbrl
 from .address import address_key, normalise_street
 from .cbe_client import CBEClient, CBEError
 from .cbso_client import CBSOClient, CBSOError
@@ -304,7 +304,11 @@ async def connections(cbe_number: str):
             """
             MATCH (c:Company {cbe_number: $cbe})<-[s1:SHAREHOLDER_OF]-(holder)
                   -[s2:SHAREHOLDER_OF]->(other:Company)
-            WHERE other <> c
+            // A company holding its own shares is a real edge worth keeping,
+            // but as a *via* it just says "c is connected to what c owns" —
+            // and `other <> holder` drops the same company's treasury stake
+            // being reported as a company it co-owns with itself.
+            WHERE other <> c AND holder <> c AND other <> holder
             RETURN other.cbe_number AS cbe_number,
                    other.denomination AS denomination,
                    coalesce(holder.denomination, holder.name) AS via,
@@ -318,7 +322,7 @@ async def connections(cbe_number: str):
             """
             MATCH (c:Company {cbe_number: $cbe})<-[d1:DIRECTOR_OF]-(officer)
                   -[d2:DIRECTOR_OF]->(other:Company)
-            WHERE other <> c
+            WHERE other <> c AND officer <> c AND other <> officer
             RETURN other.cbe_number AS cbe_number,
                    other.denomination AS denomination,
                    coalesce(officer.denomination, officer.name) AS via,
@@ -335,10 +339,16 @@ async def connections(cbe_number: str):
             """
             MATCH path = (c:Company {cbe_number: $cbe})
                          <-[:SHAREHOLDER_OF*1..3]-(root)
+            // Treasury shares make a company its own shareholder, which sends
+            // a variable-length walk round in circles and reports the same
+            // owner at two different depths. Drop self-loops from the path.
             WHERE NOT (root)<-[:SHAREHOLDER_OF]-()
+              AND all(r IN relationships(path)
+                      WHERE startNode(r) <> endNode(r))
             RETURN [n IN nodes(path) |
                         coalesce(n.denomination, n.name)] AS chain,
                    [r IN relationships(path) | r.pct] AS pcts
+            ORDER BY size(chain) DESC
             LIMIT 25
             """,
             cbe=cbe_number,
@@ -522,6 +532,113 @@ async def graph_for_company(cbe_number: str):
         // directly rather than making the user expand to find them.
         OPTIONAL MATCH p4 = (c)-[:REGISTERED_AT]->(:Address)<-[:REGISTERED_AT]-(:Company)
         OPTIONAL MATCH p5 = (c)-[:REGISTERED_AT]->(:Address)-[:IN_CITY]->(:City)
+        RETURN c, p1, p2, p3, p4, p5
+        """,
+        cbe=cbe_number,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Company not in the graph yet")
+    return graph.collect_graph(rows)
+
+
+@app.get("/api/company/{cbe_number}/financials")
+async def financials_series(
+    cbe_number: str,
+    years: int = Query(8, ge=1, le=20, description="How many filings to pull"),
+    refresh: bool = Query(False),
+):
+    """Key figures for the last N filed years.
+
+    Cache-first per *filing*, not per company: a year already parsed is never
+    re-fetched, so extending the range only costs requests for the years not
+    already held. Each filing is one CSV download from the NBB.
+    """
+    cbe_number = _clean_cbe(cbe_number)
+
+    cached = {} if refresh else {
+        row["deposit"]["id"]: row["deposit"]
+        for row in await ingest.get_cached_financials(cbe_number)
+    }
+
+    try:
+        deposits = await _cbso().list_deposits(cbe_number, limit=years * 2)
+    except CBSOError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+
+    # Consolidated filings restate the whole group and would sit alongside the
+    # company's own figures as if they were the same series. Keep the statutory
+    # accounts only, newest first, then trim to the requested depth.
+    statutory = [
+        d for d in deposits
+        if d["import_file_type"] in cbso_client.MACHINE_READABLE
+        and not (d.get("model_id") or "").startswith("m120")
+    ][:years]
+
+    series, fetched = [], 0
+    for deposit in reversed(statutory):
+        if deposit["id"] in cached:
+            series.append(_as_series_row(cached[deposit["id"]], deposit))
+            continue
+        try:
+            metrics = financials.extract(await _cbso().fetch_csv(deposit["id"]))
+        except CBSOError as exc:
+            logger.warning("Financials for %s failed: %s", deposit["id"], exc)
+            continue
+        if not metrics:
+            continue
+        await ingest.ingest_financials(cbe_number, deposit, metrics)
+        fetched += 1
+        series.append(_as_series_row(financials.derive(metrics), deposit))
+
+    return {
+        "cbe_number": cbe_number,
+        "metrics": {
+            name: {"label": label, "code": code}
+            for name, (code, label, _c) in financials.METRICS.items()
+        },
+        "series": series,
+        "fetched": fetched,
+        "from_cache": len(series) - fetched,
+        # Filing model is surfaced per year because the abbreviated scheme does
+        # not disclose turnover: a missing bar is "not filed", not "zero".
+        "note": "Abbreviated and micro filings do not disclose turnover.",
+    }
+
+
+def _as_series_row(metrics: dict, deposit: dict) -> dict:
+    known = set(financials.METRICS) | {"equity_ratio", "net_margin"}
+    row = {k: v for k, v in dict(metrics).items() if k in known}
+    row |= {
+        "period_end": (deposit.get("period_end") or "")[:10],
+        "year": (deposit.get("period_end") or "")[:4],
+        "model_id": deposit.get("model_id"),
+        "deposit_id": deposit.get("id"),
+    }
+    return financials.derive(row)
+
+
+@app.get("/api/graph/company/{cbe_number}/ownership")
+async def ownership_graph(cbe_number: str):
+    """The ownership neighbourhood of a company, ready for the canvas.
+
+    Kept separate from the generic expand so an investigation adds exactly the
+    ownership picture and nothing else. `Deposit` nodes are deliberately left
+    out: they are provenance, reachable from any edge's `_deposit`, and putting
+    one on the canvas next to every company buries the structure the user asked
+    to see.
+    """
+    cbe_number = _clean_cbe(cbe_number)
+    rows = await graph.run_read(
+        """
+        MATCH (c:Company {cbe_number: $cbe})
+        OPTIONAL MATCH p1 = (c)<-[:SHAREHOLDER_OF]-()
+        OPTIONAL MATCH p2 = (c)-[:HOLDS_PARTICIPATION]->()
+        OPTIONAL MATCH p3 = (c)<-[:DIRECTOR_OF]-()
+        OPTIONAL MATCH p4 = (c)-[:CONSOLIDATED_BY]->()
+        // One hop further up the ownership chain, so a parent's own owners are
+        // visible without a second round trip — that is usually the question
+        // behind "who really owns this?".
+        OPTIONAL MATCH p5 = (c)<-[:SHAREHOLDER_OF]-()<-[:SHAREHOLDER_OF]-()
         RETURN c, p1, p2, p3, p4, p5
         """,
         cbe=cbe_number,

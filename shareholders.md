@@ -177,7 +177,8 @@ And the attribute coordinates within each party:
 | `bas:m71` + `spec:m88` | Voting rights — number of shares held |
 | `bas:m30` | Legal form; `bas:m37` equity; `bas:m44` result |
 | `spec:m87` | Held directly |
-| `spec:m32` | Held via subsidiaries (inferred — this member has no label in the taxonomy, but it pairs with `m87` exactly as the two columns of note 6.5.1 do) |
+| `spec:m32` | "Held by subsidiaries" |
+| `spec:m88` / `spec:m89` | "Linked to securities" / "Not linked to securities" — share counts are filed **twice** on the voting-rights axis, and the second is usually 0, so a last-fact-wins read silently zeroes every shareholding |
 | `psn:m20` | "Shareholder structure — legal person" |
 | `psn:m1` | "Enterprise" (the filer's own participations) |
 

@@ -68,15 +68,44 @@
 
     <section id="canvas-wrap">
       <svg id="canvas">
+        <defs>
+          <!-- One marker per ownership edge type: SVG markers cannot inherit
+               the line's stroke without context-stroke, which Safari lacks. -->
+          <marker id="arrow-SHAREHOLDER_OF" viewBox="0 0 10 10" refX="10" refY="5"
+                  markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#c2703d"></path>
+          </marker>
+          <marker id="arrow-HOLDS_PARTICIPATION" viewBox="0 0 10 10" refX="10" refY="5"
+                  markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#5f8a6a"></path>
+          </marker>
+          <marker id="arrow-DIRECTOR_OF" viewBox="0 0 10 10" refX="10" refY="5"
+                  markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8a6a9e"></path>
+          </marker>
+          <marker id="arrow-CONSOLIDATED_BY" viewBox="0 0 10 10" refX="10" refY="5"
+                  markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#4a7ba7"></path>
+          </marker>
+        </defs>
         <g id="viewport">
           <g id="links"></g>
           <g id="nodes"></g>
         </g>
       </svg>
       <div id="legend"></div>
-      <div id="canvas-hint">Drag to move · scroll to zoom · double-click to pin · click an address to list every company there</div>
+      <div id="canvas-hint">Drag to move · scroll to zoom · double-click to pin · right-click a company to investigate its shareholders</div>
       <div id="tooltip" hidden></div>
+      <div id="node-menu" class="menu" hidden></div>
     </section>
+
+    <aside id="financials" hidden>
+      <div class="fin-head">
+        <span id="fin-title">Financials</span>
+        <button id="fin-close" title="Close">×</button>
+      </div>
+      <div id="fin-body"></div>
+    </aside>
   </main>
 
   <section id="console-wrap">

@@ -7,7 +7,7 @@ for records already held.
 
 ## Version
 
-**0.4.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.5.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,10 +17,10 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.4.0` |
+| Git | annotated tag `v0.5.0` |
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.4.0`, that is the code answering.
+actually running — if the header says `v0.5.0`, that is the code answering.
 
 ## Status
 
@@ -31,12 +31,20 @@ actually running — if the header says `v0.4.0`, that is the code answering.
 | Address + city canonicalisation | 17 unit tests passing; verified on live register data |
 | Graph schema + ingestion | Verified — provenance set, shared-address merging confirmed |
 | REST + Cypher endpoints | Verified, including cache-first behaviour |
-| Web UI (graph canvas + Cypher console) | Built; **City nodes and the new palette not yet verified in a browser** |
-| Shareholder / officer ingestion (NBB, Staatsblad) | Not started — edge types reserved |
+| Web UI (graph canvas + Cypher console) | Verified in a browser |
+| Shareholder / director ingestion (NBB annual accounts) | Verified end-to-end on 4 live filings |
+| Right-click investigation + ownership rendering | Verified in a browser |
+| Financial history panel | Verified on full, abbreviated and micro filings |
+| Staatsblad ingestion (changes between filings) | Not started |
 
 Verified on a live ingestion of 10 companies: 336 establishments resolved to
 328 addresses, and the five Colruyt entities registered at Edingensesteenweg
 196 correctly merged onto a single `Address` node.
+
+Ownership was verified by ingesting four real filings and confirming that two
+independent sources agree: Colruyt Group's own accounts say it holds 100 % of
+CGMI BV, and CGMI's accounts say Colruyt Group owns 100 % of it. Re-ingesting a
+filing leaves the edge count unchanged, so ingestion is idempotent.
 
 ## Running it
 
@@ -50,11 +58,16 @@ docker compose up -d
 - API: `http://192.168.68.78:8000/docs`
 - Neo4j Browser: `http://192.168.68.78:7474`
 
-Run the address tests with:
+The tests are plain scripts with no test-runner dependency — run them
+individually, or all at once:
 
 ```bash
-python3 api/tests/test_address.py
+for t in api/tests/test_*.py; do python3 "$t"; done
 ```
+
+`test_address.py` covers address and city canonicalisation, `test_xbrl.py` the
+shareholder/director extraction and identity keys, and `test_financials.py` the
+rubriek-code metrics.
 
 ## Graph model
 
@@ -65,10 +78,16 @@ python3 api/tests/test_address.py
 (Company)-[:HAS_FORM]->(JuridicalForm)
 (Company)-[:HAS_SITUATION]->(JuridicalSituation)
 
-# reserved for later ingestion, queries already written against them:
-(Company)-[:HOLDS_PARTICIPATION {pct, as_of, _source}]->(Company)   # NBB
-(Person)-[:OFFICER_OF {role, from, to, _source}]->(Company)          # Staatsblad
-(Person)-[:FOUNDED {shares, as_of, _source}]->(Company)              # Staatsblad
+# from NBB annual accounts (see "Ownership" below). Every edge carries
+# as_of, _source and _deposit, and is MERGEd on as_of so filings for
+# different years accumulate instead of overwriting each other.
+(Company|Person)-[:SHAREHOLDER_OF {pct, shares, share_nature, as_of}]->(Company)
+(Company|Person)-[:DIRECTOR_OF {role_label, represented_by, as_of}]->(Company)
+(Company)-[:HOLDS_PARTICIPATION {pct, pct_via_subsidiaries, equity, result}]->(Company)
+(Company)-[:CONSOLIDATED_BY {as_of}]->(Company)
+(Company)-[:AUDITED_BY {role, membership_number, as_of}]->(Company)
+(Person)-[:RESIDES_AT]->(Address)
+(Company)-[:FILED]->(Deposit)
 ```
 
 **Addresses are nodes, not properties.** That is what makes "which companies
@@ -90,25 +109,136 @@ Every spelling seen for a post code is kept in `City.aliases`, so a search for
 either *Etterbeek* or *Brussel* finds the same node. `Address.full_address`
 still holds the register's raw display string, post code and all.
 
-## Data sources and their limits
+## Ownership
 
 The CBE API provides identification, addresses, establishments, NACE codes,
 legal form and status. It provides **no shareholder, director or financial
-data**. Ownership therefore has to come from elsewhere, and no single source
-covers every company:
+data**. All of that comes from the annual accounts filed with the National
+Bank's Central Balance Sheet Office, fetched per company by
+[`cbso_client.py`](api/app/cbso_client.py) and extracted by
+[`xbrl.py`](api/app/xbrl.py):
 
-| Source | Gives | Coverage | Freshness |
-|---|---|---|---|
-| Staatsblad incorporation deeds | Founding shareholders + shares | Near-universal | Stale — transfers aren't published |
-| Staatsblad appointments | Directors / managers | Near-universal | Current |
-| NBB full-format annual accounts | Participations + % | Minority of filers | Current |
+```
+GET /api/company/{cbe_number}/shareholders
+```
 
-These are modelled as **distinct edge types carrying `_source` and `_as_of`**
-rather than one generic `SHAREHOLDER` relationship, so a query can tell
-"founded this in 2009" apart from "currently holds 62%".
+One filing yields shareholders (legal *and* natural persons, with percentages
+and share counts), the board, the auditor, and the participations the company
+holds in others — with **CBE numbers attached to legal persons**, so they join
+straight onto existing `Company` nodes rather than being matched on name.
 
-The UBO register is not an option: public access was withdrawn after the 2022
-CJEU ruling and now requires demonstrated legitimate interest.
+Two things about the source shape the code:
+
+- **The CBSO taxonomy is fully dimensional.** A 1.8 MB filing uses about
+  eighteen element names; all meaning lives in the context dimensions. There is
+  no `<Shareholder>` tag. The dimension constants in `xbrl.py` are taken from
+  NBB's own label linkbases, not guessed.
+- **Percentages are filed as fractions** (`0.6444`) and converted to percent
+  once, at extraction, so nothing downstream has to remember which it holds.
+
+### Reading it on the canvas
+
+In the UI this is a **right-click on any company node** → *Investigate
+shareholders*, *Financials over time*, or *Expand neighbours*. A party with no
+CBE number cannot be looked up at the NBB, so the option is disabled with the
+reason rather than offered and failing.
+
+Ownership edges carry direction arrows — for ownership, which way the edge
+points is the whole question — and are captioned with the percentage rather
+than the relationship name:
+
+| | |
+|---|---|
+| Solid orange, arrow | owns (`SHAREHOLDER_OF`) |
+| Solid green, arrow | holds stake in (`HOLDS_PARTICIPATION`) |
+| Dashed purple | directs — control without ownership |
+| Dotted blue | consolidated by |
+| Line thickness | >50 % control, 25–50 % blocking minority |
+
+Ownership is solid and control is dashed on purpose: a director controls
+without owning, and conflating the two is the mistake the colouring exists to
+prevent. Foreign parties render as a distinct label, since `:Company:ExternalEntity`
+would otherwise be indistinguishable from a Belgian company.
+
+### Financial history
+
+The same filings carry the balance sheet and P&L. `GET /api/company/{cbe}/financials`
+returns a per-year series, and the UI shows it in a right-hand panel: turnover
+and result, equity vs liabilities with the equity ratio, and operating result.
+
+The figures come from the NBB's own CSV export of the filing, which flattens
+the XBRL to standard Belgian **rubriek codes** — a documented numbering scheme
+is a more stable contract than the dimensional encoding. Two traps, both
+handled in [`financials.py`](api/app/financials.py) and covered by tests:
+
+- **Rubriek codes are not comparable across filing models.** Code `9900` is
+  unused in the full scheme but means *gross margin* in the abbreviated one, so
+  it is never read as the operating result. Only `9901` is.
+- **A metric that was not filed must stay absent, never become 0.** Abbreviated
+  and micro filings do not disclose turnover, and capital-less BVs have no
+  capital code at all. A zero would plot as a real collapse.
+
+Consolidated filings are excluded from the series: they restate the whole group
+and would otherwise sit alongside the company's own figures as if they were one
+continuous history.
+
+### Coverage
+
+Shareholder disclosure is *not* limited to listed companies, which is the
+assumption this project started with and had wrong. Verified on live filings:
+
+| Company | Model | Extracted |
+|---|---|---|
+| Colruyt Group NV `0400378485` | full | 11 shareholders, 10 directors, 33 participations |
+| CGMI BV `0779301067` | abbreviated | sole shareholder + CBE, director, auditor |
+| Achilles Dott BV `0691752926` | abbreviated | 4 legal + 5 natural-person shareholders |
+| Korys NV `0844198918` | full | **no shareholders at all**; 3 directors, 9 participations |
+
+That last row is the honest counterweight to the other three. Korys NV is a
+private holding, and its filing simply omits the shareholder section — no
+`snlp`/`snnp` dimensions, no `psn:m20`/`m22` members. The extractor is not
+missing them; they are not there. The UI reports "the filing names no
+shareholders" rather than an empty list that reads like a failure.
+
+**Not yet measured:** how often these fields are populated across a random
+sample of Belgian filers. Three of the four verified companies are in one
+group, which tends to file carefully. See [shareholders.md](shareholders.md)
+for the full source research, the endpoint contracts and the open questions.
+
+Other sources considered: the **UBO register** is not an option (public access
+withdrawn after the 2022 CJEU ruling); **eStox** is notary-only; the
+**Staatsblad** remains useful for changes between filings and is not
+implemented.
+
+### Rate limits, and why the cache matters here
+
+The credential-free Consult portal states it "is not intended for the
+systematic - or mass - consultation or downloading of files". The endpoint is
+cache-first for that reason as much as for speed: the NBB is asked once per
+company, then the graph answers. Setting `CBSO_SUBSCRIPTION_KEY` switches
+[`cbso_client.py`](api/app/cbso_client.py) to the official web services, whose
+"Authentic Data Query" product is free of charge and is the right basis for any
+scheduled ingestion.
+
+### Identity
+
+Legal persons carry a CBE number, so they need no matching. Natural persons
+carry a name and nothing else, so a key is constructed in
+[`identity.py`](api/app/identity.py): normalised name plus the home post code
+where the filing gives one, else the CBE number of the company the mandate is
+held in. **Two people are never merged on name alone** — "Jan Peeters" is not
+one person — so the fallback deliberately confines a person to a single
+company rather than risking a false link between unrelated businesses.
+
+The two name parts are **sorted** into the key, because filers disagree about
+which field is which: Achilles Dott files surnames in the surname dimension,
+while Korys NV filed Willem Colruyt as surname "Willem", first name "Colruyt".
+Without sorting, one director becomes two nodes and the cross-company link
+disappears. Display names keep the filing's own order, so a person can appear
+as "Colruyt Willem" — that is the filing being wrong, not the graph.
+
+Filings contain private individuals' home addresses. That is a further reason
+to keep this instance unexposed, as the brief intends.
 
 ## Notes from probing the live API
 
