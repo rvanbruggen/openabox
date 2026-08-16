@@ -9,13 +9,17 @@ for records already held.
 
 | Component | State |
 |---|---|
-| Docker Compose stack (Neo4j + API) | Written, **not yet run** |
-| CBE API client | Written; auth + response shape validated against the live API |
-| Address canonicalisation | Written and unit-tested (8 tests passing) |
-| Graph schema + ingestion | Written, **not yet run against Neo4j** |
-| REST + Cypher endpoints | Written, **not yet run** |
+| Docker Compose stack (Neo4j + API) | Running |
+| CBE API client | Verified against the live API |
+| Address canonicalisation | 11 unit tests passing; verified on live register data |
+| Graph schema + ingestion | Verified — provenance set, shared-address merging confirmed |
+| REST + Cypher endpoints | Verified, including cache-first behaviour |
 | Web UI (graph canvas + Cypher console) | Not started |
 | Shareholder / officer ingestion (NBB, Staatsblad) | Not started — edge types reserved |
+
+Verified on a live ingestion of 10 companies: 336 establishments resolved to
+328 addresses, and the five Colruyt entities registered at Edingensesteenweg
+196 correctly merged onto a single `Address` node.
 
 ## Running it
 
