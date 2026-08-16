@@ -8,33 +8,45 @@
 </head>
 <body>
   <header>
-    <h1>OpenABox <span id="version" class="version" title="Application version">…</span></h1>
     <form id="search-form">
-      <select id="mode" title="What to search by">
-        <option value="auto">Auto</option>
-        <option value="name">Name</option>
-        <option value="number">CBE nr</option>
-        <option value="nace">NACE</option>
-        <option value="address">Address</option>
-      </select>
-      <input id="search-input" type="search" placeholder="Company name, NACE code, address, or 0716.663.615" autocomplete="off" required>
-      <span id="address-fields" hidden>
-        <input id="addr-street" type="text" placeholder="Street" autocomplete="off">
-        <input id="addr-number" type="text" placeholder="Nr" autocomplete="off" class="narrow">
-        <input id="addr-postcode" type="text" placeholder="Postcode" autocomplete="off" class="narrow">
-        <input id="addr-city" type="text" placeholder="City" autocomplete="off">
-      </span>
-      <select id="nace-version" title="NACE version" hidden>
-        <option value="2008" selected>2008</option>
-        <option value="2025">2025</option>
-        <option value="2003">2003</option>
-      </select>
-      <button type="submit">Search</button>
-      <label class="refresh" title="Bypass the cache and spend an API call">
-        <input type="checkbox" id="refresh"> live
-      </label>
+      <div class="bar">
+        <h1>OpenABox <span id="version" class="version" title="Application version">…</span></h1>
+        <select id="mode" title="What to search by">
+          <option value="auto">Auto</option>
+          <option value="name">Name</option>
+          <option value="number">CBE nr</option>
+          <option value="nace">NACE</option>
+          <option value="address">Address</option>
+        </select>
+        <input id="search-input" type="search" placeholder="Company name, NACE code, address, or 0716.663.615" autocomplete="off" required>
+        <select id="nace-version" title="NACE version" hidden>
+          <option value="2008" selected>2008</option>
+          <option value="2025">2025</option>
+          <option value="2003">2003</option>
+        </select>
+        <button type="submit">Search</button>
+        <label class="refresh" title="Bypass the cache and spend an API call">
+          <input type="checkbox" id="refresh"> live
+        </label>
+        <div id="quota" class="quota"></div>
+      </div>
+
+      <div id="address-fields" hidden>
+        <label class="field">Street
+          <input id="addr-street" type="text" autocomplete="off" placeholder="Edingensesteenweg">
+        </label>
+        <label class="field narrow">Number
+          <input id="addr-number" type="text" autocomplete="off" placeholder="196">
+        </label>
+        <label class="field narrow">Postcode
+          <input id="addr-postcode" type="text" autocomplete="off" placeholder="1500">
+        </label>
+        <label class="field">City
+          <input id="addr-city" type="text" autocomplete="off" placeholder="Halle">
+        </label>
+        <span class="field-hint">Any combination — city alone is fine.</span>
+      </div>
     </form>
-    <div id="quota" class="quota"></div>
   </header>
 
   <main>
