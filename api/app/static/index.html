@@ -15,6 +15,13 @@
         <span class="wordmark">Open<strong>A</strong>Box</span>
         <span id="version" class="version" title="Application version">…</span>
       </h1>
+      <!-- The two views answer different questions — "how is this connected?"
+           and "what is in here at all?" — so they share the sidebar and swap
+           the main area rather than competing for it. -->
+      <div class="view-switch" role="group" aria-label="View">
+        <button type="button" id="view-graph" class="active" aria-pressed="true">Graph</button>
+        <button type="button" id="view-table" aria-pressed="false">Table</button>
+      </div>
       <div id="quota" class="quota"></div>
     </div>
 
@@ -125,6 +132,20 @@ RETURN a, cos</textarea>
       <div id="cypher-output"></div>
     </div>
   </section>
+
+  <footer id="colophon">
+    <span id="copyright">OpenABox</span>
+    <span>·</span>
+    <!-- href and text are both filled from /health, so the footer states the
+         licence of the code that is actually running. -->
+    <a id="license-link" href="https://github.com/rvanbruggen/openabox/blob/main/LICENSE"
+       target="_blank" rel="noopener">MIT licence</a>
+    <span>·</span>
+    <span id="disclaimer">Provided as is, without warranty or guarantee of any kind.</span>
+    <span>·</span>
+    <span>Register data is supplied by the CBE and the NBB, and is not guaranteed
+      to be accurate, complete or current.</span>
+  </footer>
 
   <script src="/static/app.js"></script>
 </body>

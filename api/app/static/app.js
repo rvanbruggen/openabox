@@ -1059,6 +1059,17 @@ async function refreshQuota() {
     // Read the version from the server rather than hardcoding it here, so the
     // UI cannot drift from the running backend.
     document.getElementById('version').textContent = health.version ? `v${health.version}` : '';
+    // Same rule for the licence: the footer states what the running code says.
+    // The markup already carries the MIT terms, so a health call that fails
+    // leaves a correct footer standing rather than blanking it.
+    if (health.license) {
+      const link = document.getElementById('license-link');
+      link.textContent = `${health.license} licence`;
+      if (health.license_url) link.href = health.license_url;
+    }
+    if (health.copyright) document.getElementById('copyright').textContent =
+      `OpenABox — ${health.copyright}`;
+    if (health.disclaimer) document.getElementById('disclaimer').textContent = health.disclaimer;
     document.getElementById('quota').textContent =
       `${counts.companies ?? 0} companies · ${counts.addresses ?? 0} addresses` +
       (remaining ? ` · API ${remaining}/${rl['x-ratelimit-limit']}` : '');

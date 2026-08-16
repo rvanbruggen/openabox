@@ -7,7 +7,7 @@ for records already held.
 
 ## Version
 
-**0.5.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.5.1** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,10 +17,13 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.5.0` |
+| Git | annotated tag `v0.5.1` |
+
+The licence follows the same route — `__license__` in the same file, reported
+by `/health`, rendered in `/docs` and in the UI footer.
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.5.0`, that is the code answering.
+actually running — if the header says `v0.5.1`, that is the code answering.
 
 ## Status
 
@@ -262,6 +265,35 @@ genuinely has no establishments. TTL defaults to 90 days
 
 The Cypher endpoint runs queries in a **read transaction**, so read-only is
 enforced by Neo4j itself rather than by keyword blocklisting.
+
+## Licence
+
+OpenABox is released under the **MIT Licence** — see [LICENSE](LICENSE) for the
+full text. Copyright © 2026 Rik Van Bruggen.
+
+The software is **provided as is, without warranty or guarantee of any kind**,
+express or implied, and the author is not liable for any claim or damage
+arising from its use. That is the licence's own wording, and it is meant
+literally here: this is a personal tool, run locally, against registers whose
+shape it does not control.
+
+The licence covers **this code, and nothing else**. It says nothing about the
+data that flows through it:
+
+| | |
+|---|---|
+| This repository | MIT, as above |
+| CBE/KBO register data, via [cbeapi.be](https://cbeapi.be) | Terms of the register and of the API provider |
+| NBB annual accounts (Central Balance Sheet Office) | NBB's terms — the credential-free Consult portal rules out systematic or mass downloading |
+
+Neither register guarantees that what it returns is accurate, complete or
+current, and neither does this tool: a company's own filing is the only thing
+it repeats. Filings also contain private individuals' home addresses, which is
+a further reason to keep an instance unexposed — see [Identity](#identity).
+
+The licence is stated in three places, all reading the same constant in
+[`api/app/version.py`](api/app/version.py): `GET /health`, the OpenAPI page at
+`/docs`, and the UI footer.
 
 ## Releasing
 

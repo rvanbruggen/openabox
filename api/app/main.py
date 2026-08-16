@@ -1,19 +1,26 @@
+import csv
 import io
 import logging
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import cbso_client, config, financials, graph, ingest, xbrl
+from . import browse, cbso_client, config, financials, graph, ingest, xbrl
 from .address import address_key, normalise_street
 from .cbe_client import CBEClient, CBEError
 from .cbso_client import CBSOClient, CBSOError
-from .version import __version__
+from .version import (
+    __copyright__,
+    __disclaimer__,
+    __license__,
+    __license_url__,
+    __version__,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,8 +45,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="OpenABox",
-    description="Local Belgian company graph, backed by the CBE register and Neo4j.",
+    description=(
+        "Local Belgian company graph, backed by the CBE register and Neo4j.\n\n"
+        f"{__copyright__}. MIT licensed. {__disclaimer__} The data comes from "
+        "third-party registers and carries no accuracy guarantee either."
+    ),
     version=__version__,
+    license_info={"name": __license__, "url": __license_url__},
     lifespan=lifespan,
 )
 
@@ -90,6 +102,12 @@ async def health():
     return {
         "status": "ok",
         "version": __version__,
+        # Served alongside the version for the same reason: the UI renders
+        # whatever the running code says rather than hardcoding either.
+        "license": __license__,
+        "license_url": __license_url__,
+        "copyright": __copyright__,
+        "disclaimer": __disclaimer__,
         "neo4j": counts[0] if counts else {},
         "cbe_api_key_configured": bool(config.cbe_api_key()),
         "rate_limit": _client().rate_limit,
@@ -498,6 +516,138 @@ async def companies_in_city(
     if not rows:
         raise HTTPException(status_code=404, detail="City not in the graph")
     return rows[0]
+
+
+# --------------------------------------------------------------------------
+# Tabular browsing
+# --------------------------------------------------------------------------
+#
+# Per-column filters arrive as `f.<column>=<value>` rather than as a fixed set
+# of parameters, since the columns differ per table. The prefix keeps them from
+# ever colliding with sort/skip/limit/q, and every column key is resolved
+# against the registry before it goes anywhere near a query.
+
+_FILTER_PREFIX = "f."
+
+
+def _filters_from(request: Request) -> dict[str, str]:
+    return {
+        key[len(_FILTER_PREFIX):]: value
+        for key, value in request.query_params.items()
+        if key.startswith(_FILTER_PREFIX) and value
+    }
+
+
+def _entity_or_404(table: str) -> browse.Entity:
+    try:
+        return browse.entity(table)
+    except browse.BrowseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/api/browse")
+async def browse_tables():
+    """The table registry: what can be listed, and with which columns.
+
+    The UI builds its tabs and headers from this rather than hardcoding them,
+    for the same reason it reads the version from /health — a column added here
+    appears in the browser without a second edit somewhere else.
+    """
+    return {"tables": [e.as_dict() for e in browse.ENTITIES.values()]}
+
+
+@app.get("/api/browse/{table}")
+async def browse_rows(
+    table: str,
+    request: Request,
+    sort: str | None = None,
+    dir: str = Query("", pattern=r"^(asc|desc)?$"),
+    q: str | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=browse.MAX_LIMIT),
+):
+    """One page of a table, with its total and the query that produced it.
+
+    Everything listed here is the **local graph**, not the register: these are
+    the records that have been fetched, plus the stubs other companies' filings
+    named. The `scope` line travels with the rows so the table cannot be read
+    as a claim about Belgium.
+
+    The generated Cypher is returned so the console can pick it up — the table
+    is a shortcut into the query language, not a replacement for it.
+    """
+    entity = _entity_or_404(table)
+    filters = _filters_from(request)
+
+    try:
+        query, params = browse.rows_query(
+            entity, sort=sort, direction=dir or None, q=q,
+            filters=filters, skip=skip, limit=limit,
+        )
+        counting, count_params = browse.count_query(entity, q=q, filters=filters)
+    except browse.BrowseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    rows = await graph.run_read(query, **params)
+    totals = await graph.run_read(counting, **count_params)
+
+    return {
+        "table": entity.key,
+        "label": entity.label,
+        "scope": entity.scope,
+        "note": entity.note,
+        "columns": [c.as_dict() for c in entity.columns],
+        "sort": sort or entity.default_sort,
+        "dir": dir or entity.default_dir,
+        "skip": skip,
+        "limit": limit,
+        "total": totals[0]["total"] if totals else 0,
+        "rows": rows,
+        "query": query,
+    }
+
+
+@app.get("/api/browse/{table}/export.csv")
+async def browse_export(
+    table: str,
+    request: Request,
+    sort: str | None = None,
+    dir: str = Query("", pattern=r"^(asc|desc)?$"),
+    q: str | None = None,
+):
+    """The whole filtered table as CSV, up to EXPORT_LIMIT rows.
+
+    Deliberately not paginated and deliberately capped. The UI reads the total
+    from the rows endpoint and says which of the two it is offering, so a
+    truncated file is never handed over as if it were complete.
+    """
+    entity = _entity_or_404(table)
+    filters = _filters_from(request)
+
+    try:
+        query, params = browse.rows_query(
+            entity, sort=sort, direction=dir or None, q=q,
+            filters=filters, skip=0, limit=browse.EXPORT_LIMIT,
+        )
+    except browse.BrowseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    rows = await graph.run_read(query, **params)
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([c.label for c in entity.columns])
+    for row in rows:
+        writer.writerow([browse.to_csv_value(row.get(c.key)) for c in entity.columns])
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="openabox-{entity.key}.csv"',
+            "X-Openabox-Rows": str(len(rows)),
+        },
+    )
 
 
 @app.post("/api/cypher")

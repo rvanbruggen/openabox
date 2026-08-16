@@ -3,6 +3,24 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.5.1] — 2026-08-16
+
+### Added
+- **MIT licence.** [LICENSE](LICENSE) holds the full text; the code is provided
+  as is, without warranty or guarantee of any kind.
+- **Licence footer in the UI.** A colophon under the console bar states the
+  copyright, links to the licence, and carries the warranty disclaimer plus a
+  note that CBE and NBB register data is not guaranteed accurate, complete or
+  current.
+- Licence constants live in [`api/app/version.py`](api/app/version.py) next to
+  `__version__`, on the same single-source-of-truth rule: `GET /health` reports
+  `license`, `license_url`, `copyright` and `disclaimer`, `/docs` renders
+  FastAPI `license_info`, and the UI footer fills itself from `/health`. The
+  footer's markup carries the MIT terms statically, so a failed health call
+  leaves a correct footer standing rather than blanking it.
+- A **Licence** section in the README, separating what the MIT licence covers
+  (this code) from what it does not (the register data flowing through it).
+
 ## [0.5.0] — 2026-08-16
 
 ### Added
