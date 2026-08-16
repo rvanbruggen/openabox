@@ -421,12 +421,32 @@ const PLACEHOLDERS = {
 
 const modeSelect = document.getElementById('mode');
 const naceVersion = document.getElementById('nace-version');
+const searchInput = document.getElementById('search-input');
+const addressFields = document.getElementById('address-fields');
 
 modeSelect.addEventListener('change', () => {
   const mode = modeSelect.value;
-  document.getElementById('search-input').placeholder = PLACEHOLDERS[mode];
+  const structured = mode === 'address';
+  searchInput.placeholder = PLACEHOLDERS[mode];
+  searchInput.hidden = structured;
+  // A hidden field that is still `required` blocks form submission outright,
+  // so the flag has to move with the visibility.
+  searchInput.required = !structured;
+  addressFields.hidden = !structured;
   naceVersion.hidden = mode !== 'nace';
+  (structured ? document.getElementById('addr-street') : searchInput).focus();
 });
+
+/* Read the explicit address inputs, dropping the blanks. */
+function addressFromFields() {
+  const parts = {
+    street: document.getElementById('addr-street').value.trim(),
+    house_number: document.getElementById('addr-number').value.trim(),
+    post_code: document.getElementById('addr-postcode').value.trim(),
+    city: document.getElementById('addr-city').value.trim(),
+  };
+  return Object.fromEntries(Object.entries(parts).filter(([, v]) => v));
+}
 
 const cbeDigits = (term) => term.replace(/[.\s-]/g, '').replace(/^BE/i, '');
 
@@ -486,8 +506,12 @@ document.getElementById('search-form').addEventListener('submit', async (evt) =>
         `?nace_version=${naceVersion.value}&refresh=${live}`);
       showResults(data, `NACE ${code} (${naceVersion.value})`);
     } else if (mode === 'address') {
-      const parts = parseAddress(term);
-      if (!Object.keys(parts).length) throw new Error('Could not read an address from that.');
+      // Explicit fields when Address mode is picked; free-text parsing only
+      // when Auto routed us here, where there is nothing better to go on.
+      const parts = modeSelect.value === 'address' ? addressFromFields() : parseAddress(term);
+      if (!Object.keys(parts).length) {
+        throw new Error('Fill in at least one of street, number, postcode or city.');
+      }
       const qs = new URLSearchParams({ ...parts, refresh: live });
       showResults(await api(`/api/address/search?${qs}`),
                   Object.entries(parts).map(([k, v]) => `${k}=${v}`).join(' · '));

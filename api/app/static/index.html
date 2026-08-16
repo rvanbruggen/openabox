@@ -18,6 +18,12 @@
         <option value="address">Address</option>
       </select>
       <input id="search-input" type="search" placeholder="Company name, NACE code, address, or 0716.663.615" autocomplete="off" required>
+      <span id="address-fields" hidden>
+        <input id="addr-street" type="text" placeholder="Street" autocomplete="off">
+        <input id="addr-number" type="text" placeholder="Nr" autocomplete="off" class="narrow">
+        <input id="addr-postcode" type="text" placeholder="Postcode" autocomplete="off" class="narrow">
+        <input id="addr-city" type="text" placeholder="City" autocomplete="off">
+      </span>
       <select id="nace-version" title="NACE version" hidden>
         <option value="2008" selected>2008</option>
         <option value="2025">2025</option>

@@ -174,7 +174,7 @@ async def search_address(
     street: str | None = None,
     house_number: str | None = None,
     city: str | None = None,
-    post_code: int | None = None,
+    post_code: str | None = None,
     refresh: bool = False,
 ):
     """Companies at an address, cache-first.
@@ -186,6 +186,12 @@ async def search_address(
     """
     if not (street or house_number or city or post_code):
         raise HTTPException(status_code=400, detail="Provide at least one address part")
+
+    # The postcode arrives as free text from the form; validate it here so a
+    # stray character produces a readable message rather than a 422 body.
+    post_code = (post_code or "").strip() or None
+    if post_code and not post_code.isdigit():
+        raise HTTPException(status_code=400, detail="Postcode must be numeric")
 
     if not refresh:
         cached = await graph.run_read(
@@ -205,14 +211,17 @@ async def search_address(
             street_norm=normalise_street(street) or None,
             house_number=house_number,
             city=city,
-            post_code=str(post_code) if post_code is not None else None,
+            post_code=post_code,
         )
         if cached:
             return {"source": "cache", "count": len(cached), "results": cached}
 
     try:
         payloads = await _client().search_by_address(
-            street=street, house_number=house_number, city=city, post_code=post_code
+            street=street,
+            house_number=house_number,
+            city=city,
+            post_code=int(post_code) if post_code else None,
         )
     except CBEError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
