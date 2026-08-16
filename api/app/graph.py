@@ -31,10 +31,20 @@ SCHEMA_STATEMENTS = [
     "FOR (f:JuridicalForm) REQUIRE f.code IS UNIQUE",
     "CREATE CONSTRAINT situation_code IF NOT EXISTS "
     "FOR (s:JuridicalSituation) REQUIRE s.code IS UNIQUE",
-    # Person is unused until the Staatsblad ingestion lands, but the constraint
-    # is created now so that workstream needs no migration.
+    # Person nodes come from NBB filings: natural-person shareholders and
+    # directors. The key is constructed (see identity.py) because filings carry
+    # no personal identifier.
     "CREATE CONSTRAINT person_key IF NOT EXISTS "
     "FOR (p:Person) REQUIRE p.key IS UNIQUE",
+    # One node per annual-accounts filing, so every ownership edge can point
+    # back at the document that claimed it.
+    "CREATE CONSTRAINT deposit_id IF NOT EXISTS "
+    "FOR (d:Deposit) REQUIRE d.id IS UNIQUE",
+    # Foreign and unidentified parties cannot live in the CBE namespace, so they
+    # get their own key. They carry the Company label too, which is what keeps
+    # existing traversals working across the boundary.
+    "CREATE CONSTRAINT external_entity_key IF NOT EXISTS "
+    "FOR (e:ExternalEntity) REQUIRE e.key IS UNIQUE",
     "CREATE INDEX company_hydrated IF NOT EXISTS "
     "FOR (c:Company) ON (c._hydrated)",
     # Post code and city moved from Address to City; drop the index that
@@ -42,6 +52,10 @@ SCHEMA_STATEMENTS = [
     "DROP INDEX address_post_code IF EXISTS",
     "CREATE INDEX city_post_code IF NOT EXISTS FOR (c:City) ON (c.post_code)",
     "CREATE INDEX city_name IF NOT EXISTS FOR (c:City) ON (c.name)",
+    "CREATE INDEX deposit_period_end IF NOT EXISTS "
+    "FOR (d:Deposit) ON (d.period_end)",
+    "CREATE INDEX person_last_name IF NOT EXISTS "
+    "FOR (p:Person) ON (p.last_name)",
     # Lets name search be answered from cache instead of spending API quota.
     "CREATE FULLTEXT INDEX company_names IF NOT EXISTS "
     "FOR (c:Company) ON EACH [c.denomination, c.commercial_name, c.abbreviation]",

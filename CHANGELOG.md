@@ -3,6 +3,27 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.4.0] — 2026-08-16
+
+### Fixed
+- **Address and NACE searches were silently returning only the first page.**
+  Both upstream endpoints are properly paginated — 25 per page with `total`
+  and `last_page` — but the client read `data` once and discarded the rest.
+  `/api/nace/62010/companies` was therefore answering with 25 companies out
+  of 29,273, presented as if complete. The client now follows pages up to a
+  `max_pages` bound (default 4 = 100 records, max 40), and every response
+  carries a `pagination` block reporting `total`, `pages_fetched` and
+  `truncated`. The UI states "Showing X of Y" whenever the set was cut short.
+
+### Notes on upstream behaviour
+- `street` matches as a **prefix**: `street=Edingense` returns the same 145
+  results as `street=Edingensesteenweg`.
+- Filtering by city name is broader than by post code, because a municipality
+  spans several: `street=Edingensesteenweg&city=Halle` gives 145, while
+  `post_code=1500` gives 104 (Halle also covers 1501 and 1502).
+- Address search, unlike name search, returns a genuine paginator — so it is
+  the endpoint to use for exhaustive queries.
+
 ## [0.3.0] — 2026-08-16
 
 ### Added

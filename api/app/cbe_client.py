@@ -96,6 +96,42 @@ class CBEClient:
 
         return response.json()
 
+    async def _get_pages(
+        self, path: str, params: dict | None = None, max_pages: int = 1
+    ) -> tuple[list[dict], dict]:
+        """Follow the paginated envelope, up to `max_pages` requests.
+
+        The address and NACE endpoints return a real Laravel paginator — 25 per
+        page with `total` and `last_page` — so reading only the first page
+        silently truncates: NACE 62010 alone has 29,273 companies across 1,171
+        pages. Each page costs one request against the quota, so how deep to go
+        is the caller's decision, and the returned meta always says whether we
+        stopped early rather than pretending the set was complete.
+        """
+        records: list[dict] = []
+        meta: dict = {}
+        pages_fetched = 0
+
+        for page in range(1, max_pages + 1):
+            payload = await self._get(path, {**(params or {}), "page": page})
+            pages_fetched += 1
+            if isinstance(payload, list):
+                records.extend(payload)
+                break
+            records.extend(payload.get("data") or [])
+            meta = payload.get("meta") or {}
+            if page >= (meta.get("last_page") or 1):
+                break
+
+        total = meta.get("total")
+        return records, {
+            "total": total,
+            "per_page": meta.get("per_page"),
+            "last_page": meta.get("last_page"),
+            "pages_fetched": pages_fetched,
+            "truncated": bool(total is not None and len(records) < total),
+        }
+
     @staticmethod
     def _unwrap(payload: dict | list) -> list[dict]:
         """Return the record list from either envelope shape.
@@ -124,17 +160,18 @@ class CBEClient:
         house_number: str | None = None,
         city: str | None = None,
         post_code: int | None = None,
-    ) -> list[dict]:
-        return self._unwrap(
-            await self._get(
-                "/v1/company/search/address",
-                {
-                    "street": street,
-                    "house_number": house_number,
-                    "city": city,
-                    "post_code": post_code,
-                },
-            )
+        max_pages: int = 1,
+    ) -> tuple[list[dict], dict]:
+        """Search by address components. Street matches as a prefix upstream."""
+        return await self._get_pages(
+            "/v1/company/search/address",
+            {
+                "street": street,
+                "house_number": house_number,
+                "city": city,
+                "post_code": post_code,
+            },
+            max_pages=max_pages,
         )
 
     async def get_company(self, cbe_number: str) -> dict:
@@ -149,11 +186,13 @@ class CBEClient:
             return payload["data"]
         return payload
 
-    async def companies_by_nace(self, code: str, nace_version: str = "2008") -> list[dict]:
-        return self._unwrap(
-            await self._get(
-                f"/v1/nace/{code}/companies", {"nace_version": nace_version}
-            )
+    async def companies_by_nace(
+        self, code: str, nace_version: str = "2008", max_pages: int = 1
+    ) -> tuple[list[dict], dict]:
+        return await self._get_pages(
+            f"/v1/nace/{code}/companies",
+            {"nace_version": nace_version},
+            max_pages=max_pages,
         )
 
     async def nace_hierarchy(self) -> list[dict]:

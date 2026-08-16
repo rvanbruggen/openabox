@@ -464,9 +464,18 @@ function showResults(data, context) {
     </div>`;
   }).join('');
 
+  // Say plainly when the upstream set was larger than what we fetched — a
+  // truncated list otherwise reads as a complete answer.
+  const p = data.pagination;
+  const truncated = p && p.truncated
+    ? `<p class="empty">Showing ${results.length} of ${p.total}. Raise
+       <code>max_pages</code> to fetch more — each page is one API request.</p>`
+    : '';
+
   box.innerHTML =
     `<div class="source-tag">${data.source} · ${results.length} result(s)` +
-    `${context ? ` · ${context}` : ''}</div>${items}`;
+    `${p && p.total ? ` of ${p.total}` : ''}${context ? ` · ${context}` : ''}</div>` +
+    truncated + items;
   box.querySelectorAll('.result').forEach((el) => {
     el.addEventListener('click', () => loadCompany(el.dataset.cbe));
   });

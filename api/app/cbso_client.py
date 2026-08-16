@@ -133,9 +133,10 @@ class CBSOClient:
                 f"/authentic/deposit/{deposit_id}/accountingData", "application/xbrl"
             )
         else:
+            # The Consult broker returns 406 for a specific Accept header — it
+            # serves the file only when the client expresses no preference.
             response = await self._get(
-                f"/api/external/broker/public/deposits/xbrl/{deposit_id}",
-                "application/octet-stream",
+                f"/api/external/broker/public/deposits/xbrl/{deposit_id}", "*/*"
             )
         return response.content
 

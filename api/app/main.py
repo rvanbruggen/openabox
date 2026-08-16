@@ -1,4 +1,6 @@
+import io
 import logging
+import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,25 +9,30 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, graph, ingest
+from . import config, graph, ingest, xbrl
 from .address import address_key, normalise_street
 from .cbe_client import CBEClient, CBEError
+from .cbso_client import CBSOClient, CBSOError
 from .version import __version__
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 client: CBEClient | None = None
+cbso: CBSOClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client
+    global client, cbso
     await graph.init_schema()
     client = CBEClient()
+    cbso = CBSOClient()
     yield
     if client:
         await client.aclose()
+    if cbso:
+        await cbso.aclose()
     await graph.close_driver()
 
 
@@ -59,6 +66,16 @@ def _client() -> CBEClient:
     if client is None:
         raise HTTPException(status_code=503, detail="Client not ready")
     return client
+
+
+def _cbso() -> CBSOClient:
+    if cbso is None:
+        raise HTTPException(status_code=503, detail="CBSO client not ready")
+    return cbso
+
+
+def _clean_cbe(value: str) -> str:
+    return value.replace(".", "").replace(" ", "").removeprefix("BE")
 
 
 @app.get("/health")
@@ -141,6 +158,7 @@ async def companies_by_nace(
     code: str,
     nace_version: str = Query("2008", pattern=r"^(2003|2008|2025)$"),
     refresh: bool = False,
+    max_pages: int = Query(4, ge=1, le=40, description="Upstream pages to fetch; 25 per page, 1 request each"),
 ):
     """Companies carrying a NACE code, cache-first.
 
@@ -165,11 +183,18 @@ async def companies_by_nace(
             return {"source": "cache", "count": len(cached), "results": cached}
 
     try:
-        payloads = await _client().companies_by_nace(code, nace_version)
+        payloads, pages = await _client().companies_by_nace(
+            code, nace_version, max_pages=max_pages
+        )
     except CBEError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
     await ingest.ingest_many(payloads)
-    return {"source": "cbeapi", "count": len(payloads), "results": payloads}
+    return {
+        "source": "cbeapi",
+        "count": len(payloads),
+        "results": payloads,
+        "pagination": pages,
+    }
 
 
 @app.get("/api/address/search")
@@ -179,6 +204,7 @@ async def search_address(
     city: str | None = None,
     post_code: str | None = None,
     refresh: bool = False,
+    max_pages: int = Query(4, ge=1, le=40, description="Upstream pages to fetch; 25 per page, 1 request each"),
 ):
     """Companies at an address, cache-first.
 
@@ -186,6 +212,11 @@ async def search_address(
     address key, so a query for "Edingensestwg" finds records filed as
     "Edingensesteenweg" — the same folding that makes the Address nodes merge
     in the first place.
+
+    Upstream, `street` matches as a prefix: "Edingense" returns the same set as
+    "Edingensesteenweg". Results are paginated 25 at a time; `max_pages` bounds
+    how many requests this spends, and the response reports whether the set was
+    truncated.
     """
     if not (street or house_number or city or post_code):
         raise HTTPException(status_code=400, detail="Provide at least one address part")
@@ -225,27 +256,34 @@ async def search_address(
             return {"source": "cache", "count": len(cached), "results": cached}
 
     try:
-        payloads = await _client().search_by_address(
+        payloads, pages = await _client().search_by_address(
             street=street,
             house_number=house_number,
             city=city,
             post_code=int(post_code) if post_code else None,
+            max_pages=max_pages,
         )
     except CBEError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
     await ingest.ingest_many(payloads)
-    return {"source": "cbeapi", "count": len(payloads), "results": payloads}
+    return {
+        "source": "cbeapi",
+        "count": len(payloads),
+        "results": payloads,
+        "pagination": pages,
+    }
 
 
 @app.get("/api/company/{cbe_number}/connections")
 async def connections(cbe_number: str):
     """Companies connected to this one, answered entirely from the graph.
 
-    Address overlap works today. The shareholder and officer branches are
-    written against edge types that the NBB and Staatsblad ingestion will
-    populate later — they simply return nothing until then.
+    All three branches are live once the company's annual accounts have been
+    ingested via /shareholders. Each returns the `as_of` date of the filing the
+    link came from, because "shares a shareholder" is only ever true as of some
+    balance sheet date.
     """
-    cbe_number = cbe_number.replace(".", "").replace(" ", "").removeprefix("BE")
+    cbe_number = _clean_cbe(cbe_number)
     return {
         "shared_address": await graph.run_read(
             """
@@ -259,32 +297,125 @@ async def connections(cbe_number: str):
             """,
             cbe=cbe_number,
         ),
+        # Owners are Company or Person alike, so the holder is left unlabelled
+        # and its display name coalesced — a family holding and an individual
+        # are the same kind of answer to "who else do they own?".
         "shared_shareholder": await graph.run_read(
             """
-            MATCH (c:Company {cbe_number: $cbe})<-[h1:HOLDS_PARTICIPATION]-(holder)
-                  -[h2:HOLDS_PARTICIPATION]->(other:Company)
+            MATCH (c:Company {cbe_number: $cbe})<-[s1:SHAREHOLDER_OF]-(holder)
+                  -[s2:SHAREHOLDER_OF]->(other:Company)
             WHERE other <> c
             RETURN other.cbe_number AS cbe_number,
                    other.denomination AS denomination,
                    coalesce(holder.denomination, holder.name) AS via,
-                   h1.pct AS pct_here, h2.pct AS pct_there,
-                   h1._source AS source
-            LIMIT 100
+                   s1.pct AS pct_here, s2.pct AS pct_there,
+                   s1.as_of AS as_of_here, s2.as_of AS as_of_there
+            ORDER BY pct_there DESC LIMIT 100
             """,
             cbe=cbe_number,
         ),
         "shared_officer": await graph.run_read(
             """
-            MATCH (c:Company {cbe_number: $cbe})<-[:OFFICER_OF]-(p:Person)
-                  -[:OFFICER_OF]->(other:Company)
+            MATCH (c:Company {cbe_number: $cbe})<-[d1:DIRECTOR_OF]-(officer)
+                  -[d2:DIRECTOR_OF]->(other:Company)
             WHERE other <> c
             RETURN other.cbe_number AS cbe_number,
                    other.denomination AS denomination,
-                   p.name AS via
-            LIMIT 100
+                   coalesce(officer.denomination, officer.name) AS via,
+                   labels(officer) AS via_labels,
+                   d1.role_label AS role_here, d2.role_label AS role_there,
+                   d2.as_of AS as_of
+            ORDER BY denomination LIMIT 100
             """,
             cbe=cbe_number,
         ),
+        # A company can be reached through ownership without sharing a direct
+        # shareholder: parent, subsidiary, or sibling under a common parent.
+        "ownership_chain": await graph.run_read(
+            """
+            MATCH path = (c:Company {cbe_number: $cbe})
+                         <-[:SHAREHOLDER_OF*1..3]-(root)
+            WHERE NOT (root)<-[:SHAREHOLDER_OF]-()
+            RETURN [n IN nodes(path) |
+                        coalesce(n.denomination, n.name)] AS chain,
+                   [r IN relationships(path) | r.pct] AS pcts
+            LIMIT 25
+            """,
+            cbe=cbe_number,
+        ),
+    }
+
+
+@app.get("/api/company/{cbe_number}/shareholders")
+async def shareholders(
+    cbe_number: str,
+    refresh: bool = Query(False, description="Re-fetch the filing from the NBB"),
+):
+    """Shareholders, directors and participations from the latest filing.
+
+    Cache-first, on the same principle as the CBE endpoints: the NBB is asked
+    once per company and the answer is then served from Neo4j. That is not only
+    a speed matter — the Consult portal's terms rule out systematic downloading,
+    so re-fetching on every page view would be a misuse of it.
+    """
+    cbe_number = _clean_cbe(cbe_number)
+
+    if not refresh:
+        cached = await ingest.get_cached_deposit(cbe_number, config.CBSO_CACHE_TTL_DAYS)
+        if cached and cached.get("deposit"):
+            return {"source": "cache", **cached}
+
+    try:
+        deposit = await _cbso().latest_parsable_deposit(cbe_number)
+    except CBSOError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+
+    if deposit is None:
+        return {
+            "source": "nbb-cbso",
+            "deposit": None,
+            "shareholders": [],
+            "directors": [],
+            "participations": [],
+            "note": (
+                "No machine-readable filing at the NBB. The company may never "
+                "have filed, or its filings predate XBRL and exist only as "
+                "scanned images."
+            ),
+        }
+
+    try:
+        raw = await _cbso().fetch_xbrl(deposit["id"])
+    except CBSOError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+
+    try:
+        parties = xbrl.parse_parties(io.BytesIO(raw))
+    except ET.ParseError as exc:
+        # A ZIP-typed filing can wrap the instance rather than be one. Report it
+        # rather than pretending the company has no shareholders.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Filing {deposit['id']} is not a parsable XBRL instance: {exc}",
+        )
+
+    result = await ingest.ingest_deposit(cbe_number, deposit, parties)
+    logger.info(
+        "Ingested deposit %s for %s: %s", deposit["id"], cbe_number, result["written"]
+    )
+    by_role = {
+        role: [p for p in parties if p["role"] == role]
+        for role in ("SHAREHOLDER", "DIRECTOR", "PARTICIPATION", "PARENT", "AUDITOR")
+    }
+    return {
+        "source": "nbb-cbso",
+        "deposit": deposit,
+        "shareholders": by_role["SHAREHOLDER"],
+        "directors": by_role["DIRECTOR"],
+        "participations": by_role["PARTICIPATION"],
+        "parent": by_role["PARENT"],
+        "auditors": by_role["AUDITOR"],
+        "ingested": result,
     }
 
 

@@ -6,4 +6,4 @@ from /health rather than hardcoding it). Bumping this one constant and
 tagging the commit is the whole release process — see README.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
