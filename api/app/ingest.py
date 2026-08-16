@@ -52,6 +52,19 @@ def _nace_description(value) -> str | None:
     return value or None
 
 
+def _nace_version(value) -> str | None:
+    """Normalise the NACE version to a bare year.
+
+    Company payloads report "Nace2008"/"Nace2025", but /v1/nace/{code}/companies
+    requires nace_version in {2003, 2008, 2025}. Storing the payload form
+    verbatim would mean a code looked up by year never matches the same code
+    stored from a company record.
+    """
+    if not value:
+        return None
+    return str(value).replace("Nace", "").strip() or None
+
+
 async def ingest_company(payload: dict) -> str | None:
     """Write one CompanyResource into the graph. Returns the CBE number."""
     cbe_number = payload.get("cbe_number")
@@ -73,9 +86,9 @@ async def ingest_company(payload: dict) -> str | None:
 
     nace = [
         {
-            "key": f"{a.get('nace_version')}:{a.get('code')}",
+            "key": f"{_nace_version(a.get('nace_version'))}:{a.get('code')}",
             "code": a.get("code"),
-            "version": a.get("nace_version"),
+            "version": _nace_version(a.get("nace_version")),
             "description": _nace_description(a.get("description")),
             "classification": a.get("classification"),
         }

@@ -65,6 +65,32 @@ def test_missing_house_number_still_keys():
     assert key == "BE|1000|grote markt|"
 
 
+def test_compound_and_split_street_types_fold():
+    # Both spellings occur in live register data for the same street type.
+    for joined, split in [
+        ("Brusselsesteenweg", "Brusselse steenweg"),
+        ("Gentsesteenweg", "Gentse Steenweg"),
+        ("Ninoofsesteenweg", "Ninoofse Steenweg"),
+        ("Liersesteenweg", "Lierse steenweg"),
+    ]:
+        a = address_key({"street": joined, "street_number": "1", "post_code": "9000"})
+        b = address_key({"street": split, "street_number": "1", "post_code": "9000"})
+        assert a == b, f"{joined} != {split}: {a} vs {b}"
+
+
+def test_municipality_disambiguator_is_stripped():
+    a = address_key({"street": "Kerkstraat(STE)", "street_number": "159", "post_code": "9190"})
+    b = address_key({"street": "Kerkstraat", "street_number": "159", "post_code": "9190"})
+    assert a == b == "BE|9190|kerkstraat|159"
+
+
+def test_french_street_type_is_not_joined():
+    # The type leads in French names, so the trailing-token join must not fire.
+    assert normalise_street("Rue de la Station") == "rue de la station"
+    assert normalise_street("Chaussée de Bruxelles") == "chaussee de bruxelles"
+    assert normalise_street("Place du Marché") == "place du marche"
+
+
 def test_sint_variants_fold():
     a = address_key({"street": "St.-Jansplein", "street_number": "1", "post_code": "2060"})
     b = address_key({"street": "Sint-Jansplein", "street_number": "1", "post_code": "2060"})
