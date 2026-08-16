@@ -365,11 +365,13 @@ function showDetails(node) {
      <dl class="props">${rows}</dl>`;
 }
 
-function showResults(data) {
+function showResults(data, context) {
   const box = document.getElementById('results');
   const results = data.results || [];
   if (!results.length) {
-    box.innerHTML = '<p class="empty">Nothing found. Tick <em>live</em> to query the API.</p>';
+    box.innerHTML =
+      `<p class="empty">Nothing found${context ? ` for ${context}` : ''}. ` +
+      `Tick <em>live</em> to query the API.</p>`;
     return;
   }
   const items = results.map((r) => {
@@ -377,14 +379,19 @@ function showResults(data) {
     const c = r.company || r;
     const props = c.props || c;
     const cbe = props.cbe_number;
-    const address = (r.address && (r.address.full_address)) || (props.address && props.address.full_address) || '';
+    const address = (r.address && r.address.full_address) ||
+                    (props.address && props.address.full_address) || '';
+    const extra = r.nace_code ? `${r.nace_code} — ${truncate(r.nace_description, 46)}` : '';
     return `<div class="result" data-cbe="${cbe}">
       <div class="name">${props.denomination || cbe}</div>
       <div class="meta">${props.cbe_number_formatted || cbe}${address ? ' · ' + truncate(address, 40) : ''}</div>
+      ${extra ? `<div class="meta">${extra}</div>` : ''}
     </div>`;
   }).join('');
 
-  box.innerHTML = `<div class="source-tag">${data.source} · ${results.length} result(s)</div>${items}`;
+  box.innerHTML =
+    `<div class="source-tag">${data.source} · ${results.length} result(s)` +
+    `${context ? ` · ${context}` : ''}</div>${items}`;
   box.querySelectorAll('.result').forEach((el) => {
     el.addEventListener('click', () => loadCompany(el.dataset.cbe));
   });
@@ -404,22 +411,89 @@ async function loadCompany(cbe) {
 
 /* ---------- search ---------- */
 
+const PLACEHOLDERS = {
+  auto:    'Company name, NACE code, address, or 0716.663.615',
+  name:    'Company name, e.g. Colruyt',
+  number:  'CBE / VAT number, e.g. 0716.663.615 or BE0716663615',
+  nace:    'NACE code, e.g. 62 or 62010 (prefix matches sub-codes)',
+  address: 'Edingensesteenweg 196, 1500 Halle',
+};
+
+const modeSelect = document.getElementById('mode');
+const naceVersion = document.getElementById('nace-version');
+
+modeSelect.addEventListener('change', () => {
+  const mode = modeSelect.value;
+  document.getElementById('search-input').placeholder = PLACEHOLDERS[mode];
+  naceVersion.hidden = mode !== 'nace';
+});
+
+const cbeDigits = (term) => term.replace(/[.\s-]/g, '').replace(/^BE/i, '');
+
+function detectMode(term) {
+  const digits = cbeDigits(term);
+  if (/^\d{9,10}$/.test(digits)) return 'number';
+  // A short all-digit term is a NACE code. It is ambiguous with a postal
+  // code, so Auto resolves it to NACE; pick Address explicitly for a postcode.
+  if (/^\d{1,5}$/.test(digits)) return 'nace';
+  if (/\d/.test(term) && /[a-z]/i.test(term)) return 'address';
+  return 'name';
+}
+
+/* Split a free-text address into the components the API and cache expect.
+ * "Edingensesteenweg 196, 1500 Halle" -> street/house_number/post_code/city */
+function parseAddress(text) {
+  const out = {};
+  let rest = text.trim();
+
+  const postcode = rest.match(/\b(\d{4})\b/);
+  if (postcode) { out.post_code = postcode[1]; rest = rest.replace(postcode[0], ' '); }
+
+  const [head, tail] = rest.split(',').map((s) => s.trim());
+  rest = head || '';
+  if (tail) out.city = tail;
+
+  // First run of digits inside the street part is the house number; whatever
+  // follows it is the city when no comma separated it out.
+  const m = rest.match(/^(.+?)\s+(\d+\s?[a-zA-Z]?)\b\s*(.*)$/);
+  if (m) {
+    out.street = m[1].trim();
+    out.house_number = m[2].replace(/\s/g, '');
+    if (m[3] && !out.city) out.city = m[3].trim();
+  } else if (rest) {
+    out.street = rest;
+  }
+  return out;
+}
+
 document.getElementById('search-form').addEventListener('submit', async (evt) => {
   evt.preventDefault();
   const term = document.getElementById('search-input').value.trim();
   const live = document.getElementById('refresh').checked;
   const box = document.getElementById('results');
+  const mode = modeSelect.value === 'auto' ? detectMode(term) : modeSelect.value;
   box.innerHTML = '<p class="empty">Searching…</p>';
 
-  // A bare number is a CBE lookup, not a name search.
-  const digits = term.replace(/[.\s]/g, '').replace(/^BE/i, '');
   try {
-    if (/^\d{9,10}$/.test(digits)) {
+    if (mode === 'number') {
+      const digits = cbeDigits(term);
       await loadCompany(digits);
       box.innerHTML = `<div class="source-tag">looked up ${digits}</div>`;
-      return;
+    } else if (mode === 'nace') {
+      const code = cbeDigits(term);
+      const data = await api(
+        `/api/nace/${encodeURIComponent(code)}/companies` +
+        `?nace_version=${naceVersion.value}&refresh=${live}`);
+      showResults(data, `NACE ${code} (${naceVersion.value})`);
+    } else if (mode === 'address') {
+      const parts = parseAddress(term);
+      if (!Object.keys(parts).length) throw new Error('Could not read an address from that.');
+      const qs = new URLSearchParams({ ...parts, refresh: live });
+      showResults(await api(`/api/address/search?${qs}`),
+                  Object.entries(parts).map(([k, v]) => `${k}=${v}`).join(' · '));
+    } else {
+      showResults(await api(`/api/search?name=${encodeURIComponent(term)}&refresh=${live}`));
     }
-    showResults(await api(`/api/search?name=${encodeURIComponent(term)}&refresh=${live}`));
   } catch (err) {
     box.innerHTML = `<p class="empty">${err.message}</p>`;
   }
@@ -504,5 +578,7 @@ async function refreshQuota() {
   } catch { /* health is advisory only */ }
 }
 
+// Render once on load so the legend starts hidden rather than as an empty box.
+render();
 refreshQuota();
 requestAnimationFrame(loop);

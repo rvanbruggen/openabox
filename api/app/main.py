@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, graph, ingest
-from .address import address_key
+from .address import address_key, normalise_street
 from .cbe_client import CBEClient, CBEError
 
 logging.basicConfig(level=logging.INFO)
@@ -134,13 +134,39 @@ async def get_company(cbe_number: str, refresh: bool = False):
 
 
 @app.get("/api/nace/{code}/companies")
-async def companies_by_nace(code: str, nace_version: str = "2008"):
+async def companies_by_nace(
+    code: str,
+    nace_version: str = Query("2008", pattern=r"^(2003|2008|2025)$"),
+    refresh: bool = False,
+):
+    """Companies carrying a NACE code, cache-first.
+
+    Matches by prefix, mirroring the upstream endpoint: querying "62" also
+    returns 620, 6201 and 62010. The version is part of the match because the
+    same code describes different activities across versions.
+    """
+    if not refresh:
+        cached = await graph.run_read(
+            """
+            MATCH (c:Company)-[:HAS_ACTIVITY]->(n:NaceCode)
+            WHERE n.code STARTS WITH $code AND n.version = $version
+            OPTIONAL MATCH (c)-[:REGISTERED_AT]->(a:Address)
+            RETURN DISTINCT c AS company, a AS address,
+                   n.code AS nace_code, n.description AS nace_description
+            ORDER BY c.denomination LIMIT 200
+            """,
+            code=code,
+            version=nace_version,
+        )
+        if cached:
+            return {"source": "cache", "count": len(cached), "results": cached}
+
     try:
         payloads = await _client().companies_by_nace(code, nace_version)
     except CBEError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
     await ingest.ingest_many(payloads)
-    return {"count": len(payloads), "results": payloads}
+    return {"source": "cbeapi", "count": len(payloads), "results": payloads}
 
 
 @app.get("/api/address/search")
@@ -149,7 +175,41 @@ async def search_address(
     house_number: str | None = None,
     city: str | None = None,
     post_code: int | None = None,
+    refresh: bool = False,
 ):
+    """Companies at an address, cache-first.
+
+    The cached branch matches the *canonical* street against the stored
+    address key, so a query for "Edingensestwg" finds records filed as
+    "Edingensesteenweg" — the same folding that makes the Address nodes merge
+    in the first place.
+    """
+    if not (street or house_number or city or post_code):
+        raise HTTPException(status_code=400, detail="Provide at least one address part")
+
+    if not refresh:
+        cached = await graph.run_read(
+            """
+            MATCH (a:Address)
+            WHERE ($post_code IS NULL OR a.post_code = $post_code)
+              AND ($city IS NULL OR toLower(a.city) CONTAINS toLower($city))
+              AND ($street_norm IS NULL OR a.key CONTAINS $street_norm)
+              AND ($house_number IS NULL OR a.street_number = $house_number)
+            MATCH (a)<-[:REGISTERED_AT|LOCATED_AT]-(x)
+            OPTIONAL MATCH (x)<-[:HAS_ESTABLISHMENT]-(owner:Company)
+            WITH a, coalesce(owner, x) AS c
+            WHERE c:Company
+            RETURN DISTINCT c AS company, a AS address
+            ORDER BY c.denomination LIMIT 200
+            """,
+            street_norm=normalise_street(street) or None,
+            house_number=house_number,
+            city=city,
+            post_code=str(post_code) if post_code is not None else None,
+        )
+        if cached:
+            return {"source": "cache", "count": len(cached), "results": cached}
+
     try:
         payloads = await _client().search_by_address(
             street=street, house_number=house_number, city=city, post_code=post_code
@@ -157,7 +217,7 @@ async def search_address(
     except CBEError as exc:
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
     await ingest.ingest_many(payloads)
-    return {"count": len(payloads), "results": payloads}
+    return {"source": "cbeapi", "count": len(payloads), "results": payloads}
 
 
 @app.get("/api/company/{cbe_number}/connections")

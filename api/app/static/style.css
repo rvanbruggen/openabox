@@ -67,6 +67,15 @@ input[type="search"] {
   font-size: 14px;
 }
 
+select {
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
 button {
   padding: 7px 14px;
   border: 1px solid transparent;

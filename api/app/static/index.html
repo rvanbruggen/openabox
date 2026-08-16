@@ -10,7 +10,19 @@
   <header>
     <h1>OpenABox</h1>
     <form id="search-form">
-      <input id="search-input" type="search" placeholder="Company name, or 0716.663.615" autocomplete="off" required>
+      <select id="mode" title="What to search by">
+        <option value="auto">Auto</option>
+        <option value="name">Name</option>
+        <option value="number">CBE nr</option>
+        <option value="nace">NACE</option>
+        <option value="address">Address</option>
+      </select>
+      <input id="search-input" type="search" placeholder="Company name, NACE code, address, or 0716.663.615" autocomplete="off" required>
+      <select id="nace-version" title="NACE version" hidden>
+        <option value="2008" selected>2008</option>
+        <option value="2025">2025</option>
+        <option value="2003">2003</option>
+      </select>
       <button type="submit">Search</button>
       <label class="refresh" title="Bypass the cache and spend an API call">
         <input type="checkbox" id="refresh"> live
