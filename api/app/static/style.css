@@ -53,7 +53,17 @@ header {
   flex: 0 0 auto;
 }
 
-.bar { display: flex; align-items: center; gap: 12px; }
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Search gets its own full-width row. Sharing one row with the brand, the
+ * mode select, the button and the quota readout squeezed the input to a few
+ * characters wide. */
+.bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 
 h1 {
   margin: 0;
@@ -80,14 +90,23 @@ h1 {
 
 input[type="search"], input[type="text"] {
   flex: 1;
-  min-width: 0;
-  padding: 7px 10px;
+  padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
+  background: var(--canvas);
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
 }
+
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+/* Wide enough that a company name or address stays readable while typing,
+ * instead of scrolling out of a collapsed box. */
+#search-input { min-width: 320px; }
 
 #address-fields {
   display: flex;
@@ -103,12 +122,12 @@ input[type="search"], input[type="text"] {
   flex-direction: column;
   gap: 3px;
   flex: 1;
-  min-width: 0;
+  min-width: 160px;
   font-size: 11px;
   font-weight: 500;
   color: var(--muted);
 }
-.field.narrow { flex: 0 0 100px; }
+.field.narrow { flex: 0 0 110px; min-width: 110px; }
 .field-hint { font-size: 11px; color: var(--muted); padding-bottom: 7px; }
 
 select {

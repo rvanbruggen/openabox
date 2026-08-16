@@ -9,13 +9,17 @@
 </head>
 <body>
   <header>
+    <div class="brand-row">
+      <h1>
+        <img src="/static/logo.svg" alt="" class="logo" width="28" height="28">
+        <span class="wordmark">Open<strong>A</strong>Box</span>
+        <span id="version" class="version" title="Application version">…</span>
+      </h1>
+      <div id="quota" class="quota"></div>
+    </div>
+
     <form id="search-form">
       <div class="bar">
-        <h1>
-          <img src="/static/logo.svg" alt="" class="logo" width="26" height="26">
-          <span class="wordmark">Open<strong>A</strong>Box</span>
-          <span id="version" class="version" title="Application version">…</span>
-        </h1>
         <select id="mode" title="What to search by">
           <option value="auto">Auto</option>
           <option value="name">Name</option>
@@ -33,7 +37,6 @@
         <label class="refresh" title="Bypass the cache and spend an API call">
           <input type="checkbox" id="refresh"> live
         </label>
-        <div id="quota" class="quota"></div>
       </div>
 
       <div id="address-fields" hidden>

@@ -3,6 +3,17 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.2.1] — 2026-08-16
+
+### Fixed
+- The search box was collapsing to a few characters wide. It sat in one flex
+  row with the logo, wordmark, version, mode select, button, live checkbox and
+  the quota readout, and carried `min-width: 0`, so every other element took
+  width from it first. Search now has its own full-width row, a `320px`
+  minimum, larger text and a visible focus ring; the quota readout moved up
+  beside the brand.
+- Address fields no longer shrink below a readable width either.
+
 ## [0.2.0] — 2026-08-16
 
 ### Changed — breaking

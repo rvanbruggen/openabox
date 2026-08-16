@@ -7,7 +7,7 @@ for records already held.
 
 ## Version
 
-**0.2.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.2.1** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,10 +17,10 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.2.0` |
+| Git | annotated tag `v0.2.1` |
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.2.0`, that is the code answering.
+actually running — if the header says `v0.2.1`, that is the code answering.
 
 ## Status
 
@@ -28,10 +28,10 @@ actually running — if the header says `v0.2.0`, that is the code answering.
 |---|---|
 | Docker Compose stack (Neo4j + API) | Running |
 | CBE API client | Verified against the live API |
-| Address canonicalisation | 11 unit tests passing; verified on live register data |
+| Address + city canonicalisation | 17 unit tests passing; verified on live register data |
 | Graph schema + ingestion | Verified — provenance set, shared-address merging confirmed |
 | REST + Cypher endpoints | Verified, including cache-first behaviour |
-| Web UI (graph canvas + Cypher console) | Not started |
+| Web UI (graph canvas + Cypher console) | Built; **City nodes and the new palette not yet verified in a browser** |
 | Shareholder / officer ingestion (NBB, Staatsblad) | Not started — edge types reserved |
 
 Verified on a live ingestion of 10 companies: 336 establishments resolved to
@@ -140,11 +140,15 @@ enforced by Neo4j itself rather than by keyword blocklisting.
 3. Commit, tag, and push both together:
 
 ```bash
-git commit -am "Release vX.Y.Z" && git tag vX.Y.Z && git push origin main --follow-tags
+git commit -am "Release vX.Y.Z" && git tag -a vX.Y.Z -m "..." && git push origin main --follow-tags
 ```
 
 Never push a version bump without its tag, and never tag without pushing —
 otherwise the running container reports a version that no commit corresponds to.
+
+The tag **must be annotated** (`git tag -a`). `--follow-tags` pushes annotated
+tags only, and it does so silently: a lightweight tag is skipped while the push
+still reports success, leaving the release untagged on the remote.
 
 Deploying a release on the Docker host:
 
