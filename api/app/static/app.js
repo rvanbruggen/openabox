@@ -303,7 +303,7 @@ window.addEventListener('mouseup', async (evt) => {
   // A click that never moved is an expand request, not a drag.
   if (drag && !drag.moved) {
     drag.node.pinned = false;
-    showDetails(drag.node);
+    await showDetails(drag.node);
     await expand(drag.node);
   }
 });
@@ -362,7 +362,7 @@ async function expand(node) {
 
 /* ---------- sidebar ---------- */
 
-function showDetails(node) {
+async function showDetails(node) {
   const details = document.getElementById('details');
   const rows = Object.entries(node.props)
     .filter(([, v]) => v !== null && v !== '')
@@ -370,8 +370,73 @@ function showDetails(node) {
     .join('');
   details.innerHTML =
     `<div class="source-tag">${node.labels.join(' · ')}</div>
-     <div style="font-weight:600;margin-bottom:8px">${caption(node)}</div>
-     <dl class="props">${rows}</dl>`;
+     <div class="detail-title">${caption(node)}</div>
+     <dl class="props">${rows}</dl>
+     <div id="occupants"></div>`;
+
+  if (node.labels.includes('Address')) await showAddressOccupants(node);
+  else if (node.labels.includes('City')) await showCityOccupants(node);
+}
+
+/* Render a clickable list of companies, each loading that company's graph. */
+function occupantList(companies, emptyText) {
+  if (!companies.length) return `<p class="empty">${emptyText}</p>`;
+  return companies.map((c) => `
+    <div class="result occupant" data-cbe="${c.cbe_number}">
+      <div class="name">${c.denomination || c.cbe_number}</div>
+      <div class="meta">${c.cbe_number}${
+        c.establishment_number ? ` · est. ${c.establishment_number}` : ''
+      }${c.address ? ' · ' + truncate(c.address, 34) : ''}</div>
+    </div>`).join('');
+}
+
+function wireOccupants(box) {
+  box.querySelectorAll('.occupant').forEach((el) => {
+    el.addEventListener('click', () => loadCompany(el.dataset.cbe));
+  });
+}
+
+async function showAddressOccupants(node) {
+  const box = document.getElementById('occupants');
+  box.innerHTML = '<p class="empty">Loading companies at this address…</p>';
+  let data;
+  try {
+    data = await api(`/api/address/companies?key=${encodeURIComponent(node.props.key)}`);
+  } catch (err) {
+    box.innerHTML = `<p class="empty">${err.message}</p>`;
+    return;
+  }
+
+  // Registered office and branch are kept apart: being registered at an
+  // address is a different claim from merely operating a site there.
+  box.innerHTML = `
+    <h3 class="occupants-heading">Registered office here
+      <span class="count">${data.registered.length}</span></h3>
+    ${occupantList(data.registered, 'No company is registered at this address.')}
+    <h3 class="occupants-heading">Establishment here
+      <span class="count">${data.establishments.length}</span></h3>
+    ${occupantList(data.establishments, 'No establishments recorded here.')}
+    <button class="secondary wide" id="add-occupants">Add all to canvas</button>`;
+
+  wireOccupants(box);
+  document.getElementById('add-occupants').addEventListener('click', () => expand(node));
+}
+
+async function showCityOccupants(node) {
+  const box = document.getElementById('occupants');
+  box.innerHTML = '<p class="empty">Loading companies in this city…</p>';
+  let data;
+  try {
+    data = await api(`/api/city/companies?key=${encodeURIComponent(node.props.key)}`);
+  } catch (err) {
+    box.innerHTML = `<p class="empty">${err.message}</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <h3 class="occupants-heading">Registered in ${data.post_code || ''} ${data.city || ''}
+      <span class="count">${data.companies.length}</span></h3>
+    ${occupantList(data.companies, 'No companies here yet.')}`;
+  wireOccupants(box);
 }
 
 function showResults(data, context) {

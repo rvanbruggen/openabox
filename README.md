@@ -7,7 +7,7 @@ for records already held.
 
 ## Version
 
-**0.2.1** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.3.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,10 +17,10 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.2.1` |
+| Git | annotated tag `v0.3.0` |
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.2.1`, that is the code answering.
+actually running — if the header says `v0.3.0`, that is the code answering.
 
 ## Status
 

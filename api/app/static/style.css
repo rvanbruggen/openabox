@@ -193,6 +193,28 @@ main { flex: 1; display: flex; min-height: 0; }
   margin-bottom: 8px;
 }
 
+.detail-title { font-weight: 600; margin-bottom: 8px; }
+
+.occupants-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+}
+.occupants-heading .count {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font: 10px var(--mono);
+}
+button.wide { width: 100%; margin-top: 10px; }
+
 dl.props { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12px; }
 dl.props dt { color: var(--muted); }
 dl.props dd { margin: 0; word-break: break-word; }

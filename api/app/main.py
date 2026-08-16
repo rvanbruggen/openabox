@@ -288,19 +288,75 @@ async def connections(cbe_number: str):
     }
 
 
-@app.get("/api/address/{key:path}/companies")
-async def companies_at_address(key: str):
-    return await graph.run_read(
+@app.get("/api/address/companies")
+async def companies_at_address(key: str = Query(..., description="Address.key")):
+    """Every company at one address, answered from the graph.
+
+    Registered offices and branches are returned separately: a company whose
+    registered office is here is a different claim from one that merely runs
+    an establishment here, and collapsing them would hide that.
+
+    The key is taken as a query parameter rather than a path segment because
+    it contains `|` separators.
+    """
+    rows = await graph.run_read(
         """
         MATCH (a:Address {key: $key})
-        OPTIONAL MATCH (a)<-[:REGISTERED_AT]-(c:Company)
-        OPTIONAL MATCH (a)<-[:LOCATED_AT]-(:Establishment)<-[:HAS_ESTABLISHMENT]-(ec:Company)
-        RETURN a.full_address AS address,
-               collect(DISTINCT c.denomination) AS registered,
-               collect(DISTINCT ec.denomination) AS establishments
+        OPTIONAL MATCH (a)-[:IN_CITY]->(ct:City)
+        CALL {
+            WITH a
+            MATCH (a)<-[:REGISTERED_AT]-(c:Company)
+            RETURN collect(DISTINCT {
+                cbe_number: c.cbe_number,
+                denomination: c.denomination,
+                status: c.status
+            }) AS registered
+        }
+        CALL {
+            WITH a
+            MATCH (a)<-[:LOCATED_AT]-(e:Establishment)<-[:HAS_ESTABLISHMENT]-(c:Company)
+            RETURN collect(DISTINCT {
+                cbe_number: c.cbe_number,
+                denomination: c.denomination,
+                establishment_number: e.establishment_number
+            }) AS establishments
+        }
+        RETURN a.key AS key,
+               a.full_address AS full_address,
+               ct.post_code AS post_code,
+               ct.name AS city,
+               registered,
+               establishments
         """,
         key=key,
     )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Address not in the graph")
+    return rows[0]
+
+
+@app.get("/api/city/companies")
+async def companies_in_city(
+    key: str = Query(..., description="City.key"),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """Companies with a registered office in one city (postal area)."""
+    rows = await graph.run_read(
+        """
+        MATCH (ct:City {key: $key})<-[:IN_CITY]-(a:Address)<-[:REGISTERED_AT]-(c:Company)
+        RETURN ct.post_code AS post_code, ct.name AS city, ct.aliases AS aliases,
+               collect(DISTINCT {
+                   cbe_number: c.cbe_number,
+                   denomination: c.denomination,
+                   address: a.full_address
+               })[0..$limit] AS companies
+        """,
+        key=key,
+        limit=limit,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="City not in the graph")
+    return rows[0]
 
 
 @app.post("/api/cypher")

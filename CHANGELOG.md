@@ -3,6 +3,21 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.3.0] — 2026-08-16
+
+### Added
+- **Click an address to see every company there.** Selecting an `Address` node
+  lists its occupants in the sidebar, split into *registered office here* and
+  *establishment here* — being registered at an address is a different claim
+  from operating a site there, and merging the two would hide it. Each entry
+  loads that company's graph, and "Add all to canvas" pulls them in at once.
+- Selecting a `City` node lists the companies registered in that postal area.
+- `GET /api/address/companies?key=` and `GET /api/city/companies?key=`.
+
+### Changed
+- Replaced `GET /api/address/{key}/companies`, which returned bare name lists
+  and took the key as a path segment even though keys contain `|`.
+
 ## [0.2.1] — 2026-08-16
 
 ### Fixed
