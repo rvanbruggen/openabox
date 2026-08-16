@@ -1,7 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, graph, ingest
@@ -31,10 +34,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
 
 class CypherRequest(BaseModel):
     query: str
     params: dict = Field(default_factory=dict)
+
+
+class ExpandRequest(BaseModel):
+    element_id: str
+    limit: int = Field(default=50, ge=1, le=300)
 
 
 def _client() -> CBEClient:
@@ -217,11 +233,52 @@ async def run_cypher(request: CypherRequest):
     Read-only is enforced by the server via the transaction access mode, so a
     stray write clause fails at the database rather than relying on us to
     pattern-match dangerous keywords.
+
+    Returns both a tabular projection and a graph projection, so the console
+    can render whichever suits what the query returned.
     """
     try:
-        return {"records": await graph.run_read(request.query, **request.params)}
+        records = await graph.run_read(request.query, **request.params)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    return {"records": records, "graph": graph.collect_graph(records)}
+
+
+@app.get("/api/graph/company/{cbe_number}")
+async def graph_for_company(cbe_number: str):
+    """The immediate neighbourhood of a company, ready for the canvas."""
+    cbe_number = cbe_number.replace(".", "").replace(" ", "").removeprefix("BE")
+    rows = await graph.run_read(
+        """
+        MATCH (c:Company {cbe_number: $cbe})
+        OPTIONAL MATCH p1 = (c)-[:REGISTERED_AT]->(:Address)
+        OPTIONAL MATCH p2 = (c)-[:HAS_ACTIVITY]->(:NaceCode)
+        OPTIONAL MATCH p3 = (c)-[:HAS_FORM]->(:JuridicalForm)
+        // Co-located companies are the point of the graph, so pull them in
+        // directly rather than making the user expand to find them.
+        OPTIONAL MATCH p4 = (c)-[:REGISTERED_AT]->(:Address)<-[:REGISTERED_AT]-(:Company)
+        RETURN c, p1, p2, p3, p4
+        """,
+        cbe=cbe_number,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Company not in the graph yet")
+    return graph.collect_graph(rows)
+
+
+@app.post("/api/graph/expand")
+async def expand_node(request: ExpandRequest):
+    """Expand one node's neighbours, capped so a hub cannot flood the canvas."""
+    rows = await graph.run_read(
+        """
+        MATCH (n) WHERE elementId(n) = $element_id
+        MATCH p = (n)-[r]-(m)
+        RETURN p LIMIT $limit
+        """,
+        element_id=request.element_id,
+        limit=request.limit,
+    )
+    return graph.collect_graph(rows)
 
 
 @app.get("/api/address-key")

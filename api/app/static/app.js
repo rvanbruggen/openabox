@@ -1,0 +1,508 @@
+/* OpenABox graph explorer.
+ *
+ * Deliberately dependency-free: no build step, no CDN, no npm. The force
+ * layout below is a plain velocity-Verlet simulation, which is ample for the
+ * few hundred nodes a company neighbourhood produces and keeps the whole app
+ * runnable offline on a private Docker host.
+ */
+
+const LABEL_STYLE = {
+  Company:            { color: '#4c8bf5', r: 20 },
+  Address:            { color: '#e0663a', r: 15 },
+  Establishment:      { color: '#c9a227', r: 11 },
+  NaceCode:           { color: '#3fa66a', r: 12 },
+  JuridicalForm:      { color: '#8b62c9', r: 12 },
+  JuridicalSituation: { color: '#6b7280', r: 10 },
+  Person:             { color: '#d1477a', r: 17 },
+};
+const DEFAULT_STYLE = { color: '#8a94a6', r: 12 };
+
+const SAVED_QUERIES = [
+  ['Companies sharing an address',
+   'MATCH (a:Address)<-[:REGISTERED_AT]-(c:Company)\nWITH a, collect(c) AS cos WHERE size(cos) > 1\nRETURN a, cos'],
+  ['Busiest addresses',
+   'MATCH (a:Address)<-[:REGISTERED_AT]-(c:Company)\nRETURN a.full_address AS address, count(c) AS companies\nORDER BY companies DESC LIMIT 20'],
+  ['Companies sharing an activity',
+   'MATCH (c1:Company)-[:HAS_ACTIVITY]->(n:NaceCode)<-[:HAS_ACTIVITY]-(c2:Company)\nWHERE elementId(c1) < elementId(c2)\nRETURN n.code AS nace, n.description AS description,\n       collect(DISTINCT c1.denomination + " / " + c2.denomination)[0..5] AS pairs'],
+  ['Ownership graph (once ingested)',
+   'MATCH p = (:Company)-[:HOLDS_PARTICIPATION|FOUNDED|OFFICER_OF]-()\nRETURN p LIMIT 100'],
+  ['Cache provenance',
+   'MATCH (c:Company)\nRETURN c.denomination AS company, c._source AS source,\n       c._fetched_at AS fetched, c._hydrated AS hydrated\nORDER BY fetched DESC'],
+];
+
+const state = {
+  nodes: new Map(),
+  links: new Map(),
+  alpha: 0,
+  view: { x: 0, y: 0, k: 1 },
+  drag: null,
+  pan: null,
+};
+
+const svg       = document.getElementById('canvas');
+const viewport  = document.getElementById('viewport');
+const linkLayer = document.getElementById('links');
+const nodeLayer = document.getElementById('nodes');
+const tooltip   = document.getElementById('tooltip');
+
+/* ---------- helpers ---------- */
+
+const styleFor = (n) => LABEL_STYLE[n.labels[0]] || DEFAULT_STYLE;
+
+function caption(n) {
+  const p = n.props;
+  switch (n.labels[0]) {
+    case 'Company':            return p.denomination || p.cbe_number || 'Company';
+    case 'Address':            return p.full_address || p.key || 'Address';
+    case 'Establishment':      return p.establishment_number || 'Establishment';
+    case 'NaceCode':           return `${p.code} (${p.version || '?'})`;
+    case 'JuridicalForm':      return p.short_label || p.label || p.code;
+    case 'JuridicalSituation': return p.label || p.code;
+    case 'Person':             return p.name || 'Person';
+    default:                   return n.labels[0] || 'Node';
+  }
+}
+
+const truncate = (s, n = 34) =>
+  (s = String(s ?? ''), s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+  return body;
+}
+
+/* ---------- graph state ---------- */
+
+function mergeGraph(payload) {
+  const rect = svg.getBoundingClientRect();
+  let added = 0;
+
+  for (const raw of payload.nodes || []) {
+    if (state.nodes.has(raw._id)) continue;
+    const { _type, _id, _labels, ...props } = raw;
+    state.nodes.set(_id, {
+      id: _id,
+      labels: _labels,
+      props,
+      // Seed near the middle with jitter; the simulation does the rest.
+      x: rect.width / 2 + (Math.random() - 0.5) * 220,
+      y: rect.height / 2 + (Math.random() - 0.5) * 220,
+      vx: 0, vy: 0, pinned: false,
+    });
+    added++;
+  }
+
+  for (const raw of payload.relationships || []) {
+    if (state.links.has(raw._id)) continue;
+    state.links.set(raw._id, {
+      id: raw._id, type: raw._rel_type, from: raw._start, to: raw._end,
+    });
+  }
+
+  if (added) { render(); reheat(); }
+  return added;
+}
+
+function clearGraph() {
+  state.nodes.clear();
+  state.links.clear();
+  render();
+}
+
+/* ---------- force simulation ---------- */
+
+const REPULSION = 9000, SPRING = 0.02, LINK_DIST = 95, GRAVITY = 0.012, DAMPING = 0.82;
+
+function reheat() { state.alpha = 1; }
+
+function tick() {
+  const nodes = [...state.nodes.values()];
+  const rect = svg.getBoundingClientRect();
+  const cx = rect.width / 2, cy = rect.height / 2;
+
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.01; }
+      const d = Math.sqrt(d2);
+      const f = REPULSION / d2;
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx -= fx; a.vy -= fy;
+      b.vx += fx; b.vy += fy;
+    }
+  }
+
+  for (const link of state.links.values()) {
+    const a = state.nodes.get(link.from), b = state.nodes.get(link.to);
+    if (!a || !b) continue;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.hypot(dx, dy) || 0.01;
+    const f = (d - LINK_DIST) * SPRING;
+    const fx = (dx / d) * f, fy = (dy / d) * f;
+    a.vx += fx; a.vy += fy;
+    b.vx -= fx; b.vy -= fy;
+  }
+
+  for (const n of nodes) {
+    if (n.pinned) { n.vx = n.vy = 0; continue; }
+    n.vx += (cx - n.x) * GRAVITY;
+    n.vy += (cy - n.y) * GRAVITY;
+    n.vx *= DAMPING; n.vy *= DAMPING;
+    n.x += n.vx * state.alpha;
+    n.y += n.vy * state.alpha;
+  }
+}
+
+function loop() {
+  if (state.alpha > 0.005) {
+    tick();
+    state.alpha *= 0.985;
+    paint();
+  }
+  requestAnimationFrame(loop);
+}
+
+/* ---------- rendering ---------- */
+
+function render() {
+  linkLayer.replaceChildren();
+  nodeLayer.replaceChildren();
+
+  for (const link of state.links.values()) {
+    if (!state.nodes.has(link.from) || !state.nodes.has(link.to)) continue;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('class', 'link');
+    line.dataset.id = link.id;
+    linkLayer.append(line);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('class', 'link-label');
+    label.dataset.id = link.id;
+    label.textContent = link.type;
+    linkLayer.append(label);
+  }
+
+  for (const node of state.nodes.values()) {
+    const style = styleFor(node);
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'node');
+    g.dataset.id = node.id;
+
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('r', style.r);
+    circle.setAttribute('fill', style.color);
+    g.append(circle);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('dy', style.r + 12);
+    text.textContent = truncate(caption(node), 26);
+    g.append(text);
+
+    nodeLayer.append(g);
+  }
+
+  renderLegend();
+  paint();
+}
+
+function paint() {
+  const { x, y, k } = state.view;
+  viewport.setAttribute('transform', `translate(${x},${y}) scale(${k})`);
+
+  for (const el of linkLayer.children) {
+    const link = state.links.get(el.dataset.id);
+    const a = state.nodes.get(link.from), b = state.nodes.get(link.to);
+    if (!a || !b) continue;
+    if (el.tagName === 'line') {
+      el.setAttribute('x1', a.x); el.setAttribute('y1', a.y);
+      el.setAttribute('x2', b.x); el.setAttribute('y2', b.y);
+    } else {
+      el.setAttribute('x', (a.x + b.x) / 2);
+      el.setAttribute('y', (a.y + b.y) / 2 - 3);
+    }
+  }
+
+  for (const el of nodeLayer.children) {
+    const node = state.nodes.get(el.dataset.id);
+    el.setAttribute('transform', `translate(${node.x},${node.y})`);
+    el.classList.toggle('pinned', node.pinned);
+  }
+}
+
+function renderLegend() {
+  const present = new Set();
+  for (const n of state.nodes.values()) present.add(n.labels[0]);
+  const legend = document.getElementById('legend');
+  legend.replaceChildren();
+  legend.hidden = present.size === 0;
+  for (const label of [...present].sort()) {
+    const style = LABEL_STYLE[label] || DEFAULT_STYLE;
+    const row = document.createElement('div');
+    row.innerHTML = `<span class="dot" style="background:${style.color}"></span>${label}`;
+    legend.append(row);
+  }
+}
+
+/* ---------- canvas interaction ---------- */
+
+function toWorld(evt) {
+  const rect = svg.getBoundingClientRect();
+  const { x, y, k } = state.view;
+  return {
+    x: (evt.clientX - rect.left - x) / k,
+    y: (evt.clientY - rect.top - y) / k,
+  };
+}
+
+svg.addEventListener('mousedown', (evt) => {
+  const g = evt.target.closest('.node');
+  if (g) {
+    const node = state.nodes.get(g.dataset.id);
+    const p = toWorld(evt);
+    state.drag = { node, dx: node.x - p.x, dy: node.y - p.y, moved: false };
+    node.pinned = true;
+  } else {
+    state.pan = { x: evt.clientX - state.view.x, y: evt.clientY - state.view.y };
+    svg.classList.add('panning');
+  }
+});
+
+window.addEventListener('mousemove', (evt) => {
+  if (state.drag) {
+    const p = toWorld(evt);
+    state.drag.node.x = p.x + state.drag.dx;
+    state.drag.node.y = p.y + state.drag.dy;
+    state.drag.moved = true;
+    reheat();
+    paint();
+  } else if (state.pan) {
+    state.view.x = evt.clientX - state.pan.x;
+    state.view.y = evt.clientY - state.pan.y;
+    paint();
+  }
+});
+
+window.addEventListener('mouseup', async (evt) => {
+  const drag = state.drag;
+  state.drag = null;
+  state.pan = null;
+  svg.classList.remove('panning');
+  // A click that never moved is an expand request, not a drag.
+  if (drag && !drag.moved) {
+    drag.node.pinned = false;
+    showDetails(drag.node);
+    await expand(drag.node);
+  }
+});
+
+svg.addEventListener('dblclick', (evt) => {
+  const g = evt.target.closest('.node');
+  if (!g) return;
+  const node = state.nodes.get(g.dataset.id);
+  node.pinned = !node.pinned;
+  paint();
+});
+
+svg.addEventListener('wheel', (evt) => {
+  evt.preventDefault();
+  const rect = svg.getBoundingClientRect();
+  const mx = evt.clientX - rect.left, my = evt.clientY - rect.top;
+  const factor = evt.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const k = Math.min(4, Math.max(0.15, state.view.k * factor));
+  // Keep the point under the cursor fixed while zooming.
+  state.view.x = mx - (mx - state.view.x) * (k / state.view.k);
+  state.view.y = my - (my - state.view.y) * (k / state.view.k);
+  state.view.k = k;
+  paint();
+}, { passive: false });
+
+svg.addEventListener('mousemove', (evt) => {
+  const g = evt.target.closest('.node');
+  if (!g) { tooltip.hidden = true; return; }
+  const node = state.nodes.get(g.dataset.id);
+  const rows = Object.entries(node.props)
+    .filter(([k, v]) => v !== null && v !== '' && !k.startsWith('_'))
+    .slice(0, 6)
+    .map(([k, v]) => `<div><b>${k}</b>: ${truncate(v, 40)}</div>`)
+    .join('');
+  tooltip.innerHTML = `<div><b>${node.labels.join(', ')}</b></div>${rows}`;
+  tooltip.hidden = false;
+  const rect = svg.getBoundingClientRect();
+  tooltip.style.left = (evt.clientX - rect.left + 14) + 'px';
+  tooltip.style.top = (evt.clientY - rect.top + 14) + 'px';
+});
+
+svg.addEventListener('mouseleave', () => { tooltip.hidden = true; });
+
+async function expand(node) {
+  try {
+    const payload = await api('/api/graph/expand', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ element_id: node.id, limit: 60 }),
+    });
+    mergeGraph(payload);
+  } catch (err) {
+    console.warn('expand failed', err);
+  }
+}
+
+/* ---------- sidebar ---------- */
+
+function showDetails(node) {
+  const details = document.getElementById('details');
+  const rows = Object.entries(node.props)
+    .filter(([, v]) => v !== null && v !== '')
+    .map(([k, v]) => `<dt>${k}</dt><dd>${truncate(v, 90)}</dd>`)
+    .join('');
+  details.innerHTML =
+    `<div class="source-tag">${node.labels.join(' · ')}</div>
+     <div style="font-weight:600;margin-bottom:8px">${caption(node)}</div>
+     <dl class="props">${rows}</dl>`;
+}
+
+function showResults(data) {
+  const box = document.getElementById('results');
+  const results = data.results || [];
+  if (!results.length) {
+    box.innerHTML = '<p class="empty">Nothing found. Tick <em>live</em> to query the API.</p>';
+    return;
+  }
+  const items = results.map((r) => {
+    // Cache hits arrive wrapped as {company, address}; API hits are flat.
+    const c = r.company || r;
+    const props = c.props || c;
+    const cbe = props.cbe_number;
+    const address = (r.address && (r.address.full_address)) || (props.address && props.address.full_address) || '';
+    return `<div class="result" data-cbe="${cbe}">
+      <div class="name">${props.denomination || cbe}</div>
+      <div class="meta">${props.cbe_number_formatted || cbe}${address ? ' · ' + truncate(address, 40) : ''}</div>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `<div class="source-tag">${data.source} · ${results.length} result(s)</div>${items}`;
+  box.querySelectorAll('.result').forEach((el) => {
+    el.addEventListener('click', () => loadCompany(el.dataset.cbe));
+  });
+}
+
+async function loadCompany(cbe) {
+  clearGraph();
+  try {
+    mergeGraph(await api(`/api/graph/company/${cbe}`));
+  } catch (err) {
+    // Not in the graph yet — fetch it, which also ingests it.
+    await api(`/api/company/${cbe}`);
+    mergeGraph(await api(`/api/graph/company/${cbe}`));
+  }
+  refreshQuota();
+}
+
+/* ---------- search ---------- */
+
+document.getElementById('search-form').addEventListener('submit', async (evt) => {
+  evt.preventDefault();
+  const term = document.getElementById('search-input').value.trim();
+  const live = document.getElementById('refresh').checked;
+  const box = document.getElementById('results');
+  box.innerHTML = '<p class="empty">Searching…</p>';
+
+  // A bare number is a CBE lookup, not a name search.
+  const digits = term.replace(/[.\s]/g, '').replace(/^BE/i, '');
+  try {
+    if (/^\d{9,10}$/.test(digits)) {
+      await loadCompany(digits);
+      box.innerHTML = `<div class="source-tag">looked up ${digits}</div>`;
+      return;
+    }
+    showResults(await api(`/api/search?name=${encodeURIComponent(term)}&refresh=${live}`));
+  } catch (err) {
+    box.innerHTML = `<p class="empty">${err.message}</p>`;
+  }
+  refreshQuota();
+});
+
+/* ---------- cypher console ---------- */
+
+const consoleBody = document.getElementById('console-body');
+document.getElementById('console-toggle').addEventListener('click', (evt) => {
+  const open = consoleBody.hidden;
+  consoleBody.hidden = !open;
+  evt.target.setAttribute('aria-expanded', String(open));
+});
+
+const savedBox = document.getElementById('saved-queries');
+for (const [name, query] of SAVED_QUERIES) {
+  const btn = document.createElement('button');
+  btn.textContent = name;
+  btn.addEventListener('click', () => { document.getElementById('cypher').value = query; });
+  savedBox.append(btn);
+}
+
+document.getElementById('run-cypher').addEventListener('click', runCypher);
+document.getElementById('cypher').addEventListener('keydown', (evt) => {
+  if ((evt.metaKey || evt.ctrlKey) && evt.key === 'Enter') runCypher();
+});
+
+async function runCypher() {
+  const query = document.getElementById('cypher').value;
+  const status = document.getElementById('cypher-status');
+  const out = document.getElementById('cypher-output');
+  status.className = '';
+  status.textContent = 'running…';
+
+  let data;
+  try {
+    data = await api('/api/cypher', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, params: {} }),
+    });
+  } catch (err) {
+    status.className = 'error';
+    status.textContent = err.message;
+    out.replaceChildren();
+    return;
+  }
+
+  const { records, graph } = data;
+  const drawn = graph.nodes.length ? mergeGraph(graph) : 0;
+  status.textContent =
+    `${records.length} row(s)` + (graph.nodes.length ? ` · ${drawn} new node(s) on canvas` : '');
+
+  if (!records.length) { out.innerHTML = '<p class="empty">No rows.</p>'; return; }
+
+  const columns = [...new Set(records.flatMap((r) => Object.keys(r)))];
+  const cell = (v) => {
+    if (v && v._type === 'node') return `(${v._labels.join(':')}) ${truncate(caption({ labels: v._labels, props: v }), 40)}`;
+    if (v && v._type === 'relationship') return `[:${v._rel_type}]`;
+    if (v && typeof v === 'object') return truncate(JSON.stringify(v), 60);
+    return truncate(v, 60);
+  };
+  out.innerHTML =
+    `<table><thead><tr>${columns.map((c) => `<th>${c}</th>`).join('')}</tr></thead>
+     <tbody>${records.slice(0, 200).map((r) =>
+       `<tr>${columns.map((c) => `<td>${cell(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table>` +
+    (records.length > 200 ? `<p class="empty">Showing first 200 of ${records.length}.</p>` : '');
+}
+
+/* ---------- quota ---------- */
+
+async function refreshQuota() {
+  try {
+    const health = await api('/health');
+    const rl = health.rate_limit || {};
+    const counts = health.neo4j || {};
+    const remaining = rl['x-ratelimit-remaining'];
+    document.getElementById('quota').textContent =
+      `${counts.companies ?? 0} companies · ${counts.addresses ?? 0} addresses` +
+      (remaining ? ` · API ${remaining}/${rl['x-ratelimit-limit']}` : '');
+  } catch { /* health is advisory only */ }
+}
+
+refreshQuota();
+requestAnimationFrame(loop);

@@ -93,6 +93,42 @@ async def run_read(query: str, **params) -> list[dict]:
     return [to_jsonable(dict(record)) for record in records]
 
 
+def collect_graph(rows) -> dict:
+    """Extract a deduplicated {nodes, relationships} projection from results.
+
+    Any query that returns nodes or relationships can be drawn on the canvas,
+    including ad-hoc ones typed into the Cypher console — the projection is
+    built by walking whatever came back rather than requiring a fixed shape.
+    Relationships whose endpoints were not also returned are dropped, since
+    there is nothing to attach them to.
+    """
+    nodes: dict[str, dict] = {}
+    rels: dict[str, dict] = {}
+
+    def walk(value):
+        if isinstance(value, dict):
+            kind = value.get("_type")
+            if kind == "node":
+                nodes[value["_id"]] = value
+            elif kind == "relationship":
+                rels[value["_id"]] = value
+            elif kind == "path":
+                for item in value.get("nodes", []):
+                    walk(item)
+                for item in value.get("relationships", []):
+                    walk(item)
+            else:
+                for item in value.values():
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(rows)
+    connected = [r for r in rels.values() if r["_start"] in nodes and r["_end"] in nodes]
+    return {"nodes": list(nodes.values()), "relationships": connected}
+
+
 def to_jsonable(value):
     """Convert Neo4j types into something FastAPI can serialise.
 

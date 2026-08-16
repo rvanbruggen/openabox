@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenABox</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>OpenABox</h1>
+    <form id="search-form">
+      <input id="search-input" type="search" placeholder="Company name, or 0716.663.615" autocomplete="off" required>
+      <button type="submit">Search</button>
+      <label class="refresh" title="Bypass the cache and spend an API call">
+        <input type="checkbox" id="refresh"> live
+      </label>
+    </form>
+    <div id="quota" class="quota"></div>
+  </header>
+
+  <main>
+    <aside id="sidebar">
+      <div id="results" class="panel">
+        <p class="empty">Search for a company to begin. Results are served from
+          the local cache unless <em>live</em> is ticked.</p>
+      </div>
+      <div id="details" class="panel"></div>
+    </aside>
+
+    <section id="canvas-wrap">
+      <svg id="canvas">
+        <g id="viewport">
+          <g id="links"></g>
+          <g id="nodes"></g>
+        </g>
+      </svg>
+      <div id="legend"></div>
+      <div id="canvas-hint">Drag to move · scroll to zoom · click a node to expand · double-click to pin</div>
+      <div id="tooltip" hidden></div>
+    </section>
+  </main>
+
+  <section id="console-wrap">
+    <div id="console-bar">
+      <button id="console-toggle" aria-expanded="false">Cypher console</button>
+      <span class="hint">read-only — enforced by Neo4j, not by keyword filtering</span>
+    </div>
+    <div id="console-body" hidden>
+      <div id="saved-queries"></div>
+      <textarea id="cypher" spellcheck="false" rows="4">MATCH (a:Address)&lt;-[:REGISTERED_AT]-(c:Company)
+WITH a, collect(c) AS cos WHERE size(cos) &gt; 1
+RETURN a, cos</textarea>
+      <div class="console-actions">
+        <button id="run-cypher">Run</button>
+        <span id="cypher-status"></span>
+      </div>
+      <div id="cypher-output"></div>
+    </div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
