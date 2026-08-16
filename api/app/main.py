@@ -1,0 +1,241 @@
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
+
+from . import config, graph, ingest
+from .address import address_key
+from .cbe_client import CBEClient, CBEError
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+client: CBEClient | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global client
+    await graph.init_schema()
+    client = CBEClient()
+    yield
+    if client:
+        await client.aclose()
+    await graph.close_driver()
+
+
+app = FastAPI(
+    title="OpenABox",
+    description="Local Belgian company graph, backed by the CBE register and Neo4j.",
+    lifespan=lifespan,
+)
+
+
+class CypherRequest(BaseModel):
+    query: str
+    params: dict = Field(default_factory=dict)
+
+
+def _client() -> CBEClient:
+    if client is None:
+        raise HTTPException(status_code=503, detail="Client not ready")
+    return client
+
+
+@app.get("/health")
+async def health():
+    counts = await graph.run_read(
+        """
+        MATCH (c:Company) WITH count(c) AS companies
+        MATCH (a:Address) WITH companies, count(a) AS addresses
+        RETURN companies, addresses
+        """
+    )
+    return {
+        "status": "ok",
+        "neo4j": counts[0] if counts else {},
+        "cbe_api_key_configured": bool(config.cbe_api_key()),
+        "rate_limit": _client().rate_limit,
+    }
+
+
+@app.get("/api/search")
+async def search(
+    name: str = Query(..., min_length=2),
+    refresh: bool = Query(False, description="Bypass cache and re-query the API"),
+):
+    """Search by company name.
+
+    Cache-first: the local full-text index is consulted before spending API
+    quota. Note the upstream endpoint caps results at 10 with no pagination,
+    so the cache will often be the richer source over time.
+    """
+    if not refresh:
+        cached = await graph.run_read(
+            """
+            CALL db.index.fulltext.queryNodes('company_names', $term)
+            YIELD node, score
+            OPTIONAL MATCH (node)-[:REGISTERED_AT]->(a:Address)
+            RETURN node AS company, a AS address, score
+            ORDER BY score DESC LIMIT 25
+            """,
+            term=name,
+        )
+        if cached:
+            return {"source": "cache", "count": len(cached), "results": cached}
+
+    try:
+        payloads = await _client().search_by_name(name)
+    except CBEError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+
+    await ingest.ingest_many(payloads)
+    return {
+        "source": "cbeapi",
+        "count": len(payloads),
+        "results": payloads,
+        "note": "Upstream search returns at most 10 results.",
+    }
+
+
+@app.get("/api/company/{cbe_number}")
+async def get_company(cbe_number: str, refresh: bool = False):
+    cbe_number = cbe_number.replace(".", "").replace(" ", "").removeprefix("BE")
+
+    if not refresh:
+        cached = await ingest.get_cached_company(cbe_number, config.CACHE_TTL_DAYS)
+        if cached:
+            return {"source": "cache", "company": cached}
+
+    try:
+        payload = await _client().get_company(cbe_number)
+    except CBEError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+
+    await ingest.ingest_company(payload)
+    return {"source": "cbeapi", "company": payload}
+
+
+@app.get("/api/nace/{code}/companies")
+async def companies_by_nace(code: str, nace_version: str = "2008"):
+    try:
+        payloads = await _client().companies_by_nace(code, nace_version)
+    except CBEError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+    await ingest.ingest_many(payloads)
+    return {"count": len(payloads), "results": payloads}
+
+
+@app.get("/api/address/search")
+async def search_address(
+    street: str | None = None,
+    house_number: str | None = None,
+    city: str | None = None,
+    post_code: int | None = None,
+):
+    try:
+        payloads = await _client().search_by_address(
+            street=street, house_number=house_number, city=city, post_code=post_code
+        )
+    except CBEError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
+    await ingest.ingest_many(payloads)
+    return {"count": len(payloads), "results": payloads}
+
+
+@app.get("/api/company/{cbe_number}/connections")
+async def connections(cbe_number: str):
+    """Companies connected to this one, answered entirely from the graph.
+
+    Address overlap works today. The shareholder and officer branches are
+    written against edge types that the NBB and Staatsblad ingestion will
+    populate later — they simply return nothing until then.
+    """
+    cbe_number = cbe_number.replace(".", "").replace(" ", "").removeprefix("BE")
+    return {
+        "shared_address": await graph.run_read(
+            """
+            MATCH (c:Company {cbe_number: $cbe})-[:REGISTERED_AT]->(a:Address)
+                  <-[:REGISTERED_AT]-(other:Company)
+            WHERE other <> c
+            RETURN other.cbe_number AS cbe_number,
+                   other.denomination AS denomination,
+                   a.full_address AS address
+            ORDER BY denomination LIMIT 100
+            """,
+            cbe=cbe_number,
+        ),
+        "shared_shareholder": await graph.run_read(
+            """
+            MATCH (c:Company {cbe_number: $cbe})<-[h1:HOLDS_PARTICIPATION]-(holder)
+                  -[h2:HOLDS_PARTICIPATION]->(other:Company)
+            WHERE other <> c
+            RETURN other.cbe_number AS cbe_number,
+                   other.denomination AS denomination,
+                   coalesce(holder.denomination, holder.name) AS via,
+                   h1.pct AS pct_here, h2.pct AS pct_there,
+                   h1._source AS source
+            LIMIT 100
+            """,
+            cbe=cbe_number,
+        ),
+        "shared_officer": await graph.run_read(
+            """
+            MATCH (c:Company {cbe_number: $cbe})<-[:OFFICER_OF]-(p:Person)
+                  -[:OFFICER_OF]->(other:Company)
+            WHERE other <> c
+            RETURN other.cbe_number AS cbe_number,
+                   other.denomination AS denomination,
+                   p.name AS via
+            LIMIT 100
+            """,
+            cbe=cbe_number,
+        ),
+    }
+
+
+@app.get("/api/address/{key:path}/companies")
+async def companies_at_address(key: str):
+    return await graph.run_read(
+        """
+        MATCH (a:Address {key: $key})
+        OPTIONAL MATCH (a)<-[:REGISTERED_AT]-(c:Company)
+        OPTIONAL MATCH (a)<-[:LOCATED_AT]-(:Establishment)<-[:HAS_ESTABLISHMENT]-(ec:Company)
+        RETURN a.full_address AS address,
+               collect(DISTINCT c.denomination) AS registered,
+               collect(DISTINCT ec.denomination) AS establishments
+        """,
+        key=key,
+    )
+
+
+@app.post("/api/cypher")
+async def run_cypher(request: CypherRequest):
+    """Run an arbitrary Cypher query in a read transaction.
+
+    Read-only is enforced by the server via the transaction access mode, so a
+    stray write clause fails at the database rather than relying on us to
+    pattern-match dangerous keywords.
+    """
+    try:
+        return {"records": await graph.run_read(request.query, **request.params)}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/address-key")
+async def preview_address_key(
+    street: str, street_number: str = "", post_code: str = "", city: str = ""
+):
+    """Debug helper for tuning address canonicalisation."""
+    return {
+        "key": address_key(
+            {
+                "street": street,
+                "street_number": street_number,
+                "post_code": post_code,
+                "city": city,
+            }
+        )
+    }

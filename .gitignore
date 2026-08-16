@@ -1,0 +1,15 @@
+# Environment variables — never commit secrets to this public repo
+.env
+
+# Local working notes
+briefing.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local Neo4j import/export scratch
+data/
+

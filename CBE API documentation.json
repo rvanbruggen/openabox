@@ -1,0 +1,1883 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CBE/BCE/KBO API Documentation",
+    "version": "1.0.0",
+    "description": "Access to the Belgian Company Registry (CBE/BCE/KBO - Crossroads Bank for Enterprises). Search and retrieve official data about companies, self-employed individuals, and organizations registered in Belgium.\n\nThis API is provided by [MaFacturation](https://mafacturation.be), a Belgian invoicing software for freelancers and small businesses.\n\n### What You Can Access\n\n- Company identification (BCE number, names, legal form)\n- All establishment addresses and contact details\n- NACE activity codes with descriptions\n- Juridical situations and registration status\n- Search by name, BCE number, or address components\n\n### Multi-Language Support\n\nAll endpoints support French, Dutch, and German via the `lang` parameter or HTTP headers:\n- `?lang=fr` or `Accept-Language: fr`\n- `?lang=nl` or `Accept-Language: nl`\n- `?lang=de` or `Accept-Language: de`\n\nLanguage affects company names, legal forms, activity descriptions, and other localized fields.\n\n### Data Source\n\nSynchronized with official BCE Open Data. Data includes all registered Belgian companies with their headquarters and branch establishments."
+  },
+  "servers": [
+    {
+      "url": "https://cbeapi.be/api",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    {
+      "name": "NACE Codes"
+    }
+  ],
+  "security": [
+    {
+      "http": []
+    }
+  ],
+  "paths": {
+    "/v1/nace/hierarchy": {
+      "get": {
+        "operationId": "nace.hierarchy",
+        "description": "Returns the hierarchical structure of NACE codes organized by levels:\n- Level 1: 01, 02, 03... (2 digits)\n- Level 2: 011, 012, 013... (3 digits)\n- Level 3: 0111, 0112, 0113... (4 digits)\n- Level 4: 01110, 01120... (5 digits)\n- Level 5: 0111001, 0111002... (7+ digits)\n\nThe version parameter works cumulatively:\n- 2003: Returns only NACE 2003 codes\n- 2008: Returns NACE 2003 + 2008 codes (cumulative)\n- 2025: Returns NACE 2003 + 2008 + 2025 codes (cumulative)\n\nWhen duplicate codes exist across versions, the most recent version takes precedence.",
+        "summary": "Get NACE codes hierarchy",
+        "tags": [
+          "NACE Codes"
+        ],
+        "parameters": [
+          {
+            "name": "nace_version",
+            "in": "query",
+            "description": "NACE version to retrieve. Works cumulatively — includes all versions up to the specified one. Defaults to 2025.",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "2025",
+                "2008",
+                "2003"
+              ]
+            },
+            "example": "2025"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {}
+                    },
+                    "nace_version": {
+                      "type": "string"
+                    },
+                    "total_codes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "nace_version",
+                    "total_codes"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationException"
+          }
+        }
+      }
+    },
+    "/v1/nace/{code}": {
+      "get": {
+        "operationId": "nace.show",
+        "description": "Returns a specific NACE code with its complete hierarchy path:\nits details, all parent codes up to the root, and all direct children.\n\nThe version parameter works cumulatively like the hierarchy endpoint.",
+        "summary": "Get a NACE code with its hierarchy",
+        "tags": [
+          "NACE Codes"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The NACE code to retrieve.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "01110"
+          },
+          {
+            "name": "nace_version",
+            "in": "query",
+            "description": "NACE version to retrieve. Works cumulatively — includes all versions up to the specified one. Defaults to 2025.",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "2025",
+                "2008",
+                "2003"
+              ]
+            },
+            "example": "2025"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "": {
+                          "type": "string"
+                        },
+                        "parents": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "minItems": 0,
+                          "maxItems": 0,
+                          "additionalItems": false
+                        },
+                        "children": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "nace_version": {
+                                "type": "string"
+                              },
+                              "category": {
+                                "type": "string"
+                              },
+                              "level": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "description",
+                              "nace_version",
+                              "category",
+                              "level"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        null,
+                        "parents",
+                        "children"
+                      ]
+                    },
+                    "nace_version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "nace_version"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "const": "NACE code not found"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationException"
+          }
+        }
+      }
+    },
+    "/v1/nace/{code}/companies": {
+      "get": {
+        "operationId": "nace.companies",
+        "description": "Returns a paginated list of companies associated with a NACE activity code,\nincluding all sub-codes. For example, querying `62` returns companies with\n`620`, `6201`, `62010`, etc.\n\n`nace_version` is required because the same code can describe completely different\nactivities across versions — e.g. `01130` means \"fruit growing\" in Nace2003 but\n\"vegetables\" in Nace2008.",
+        "summary": "Get companies by NACE code",
+        "tags": [
+          "NACE Codes"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The NACE activity code. All sub-codes are included automatically.",
+            "schema": {
+              "type": "string"
+            },
+            "example": "62"
+          },
+          {
+            "name": "nace_version",
+            "in": "query",
+            "required": true,
+            "description": "NACE version (2003, 2008, 2025). Required — the same code can mean different activities across versions.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "2025",
+                "2008",
+                "2003"
+              ]
+            },
+            "example": "2008"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated set of `CompanyResource`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CompanyResource"
+                      }
+                    },
+                    "links": {
+                      "type": "object",
+                      "properties": {
+                        "first": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "last": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "prev": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "next": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "first",
+                        "last",
+                        "prev",
+                        "next"
+                      ]
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "current_page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "from": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1
+                        },
+                        "last_page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "links": {
+                          "type": "array",
+                          "description": "Generated paginator links.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "url": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "active": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "url",
+                              "label",
+                              "active"
+                            ]
+                          }
+                        },
+                        "path": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Base path for paginator generated URLs."
+                        },
+                        "per_page": {
+                          "type": "integer",
+                          "description": "Number of items shown per page.",
+                          "minimum": 0
+                        },
+                        "to": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "description": "Number of the last item in the slice.",
+                          "minimum": 1
+                        },
+                        "total": {
+                          "type": "integer",
+                          "description": "Total number of items being paginated.",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "current_page",
+                        "from",
+                        "last_page",
+                        "links",
+                        "path",
+                        "per_page",
+                        "to",
+                        "total"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "links",
+                    "meta"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationException"
+          }
+        }
+      }
+    },
+    "/v1/company/search": {
+      "get": {
+        "operationId": "searchCompany",
+        "description": "Searches for Belgian companies using either a company name or postal code.\nName searches use full-text search on company denominations and BCE numbers.\nPostal code searches return all companies in that postal code area.\nAt least one of the parameters must be provided, if both are provided, results are filtered by both.",
+        "summary": "Search for companies by name or postal code",
+        "tags": [
+          "Companies",
+          "SearchCompany"
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Company name to search for",
+            "schema": {
+              "type": "string"
+            },
+            "example": "ACME"
+          },
+          {
+            "name": "post_code",
+            "in": "query",
+            "description": "4-digit Belgian postal code",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 1000
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of `CompanyResource`\n\nPaginated set of `CompanyResource`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CompanyResource"
+                          }
+                        }
+                      },
+                      "required": [
+                        "data"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CompanyResource"
+                          }
+                        },
+                        "links": {
+                          "type": "object",
+                          "properties": {
+                            "first": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "last": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "prev": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "next": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "first",
+                            "last",
+                            "prev",
+                            "next"
+                          ]
+                        },
+                        "meta": {
+                          "type": "object",
+                          "properties": {
+                            "current_page": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "from": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "minimum": 1
+                            },
+                            "last_page": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "links": {
+                              "type": "array",
+                              "description": "Generated paginator links.",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "url": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  },
+                                  "active": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "url",
+                                  "label",
+                                  "active"
+                                ]
+                              }
+                            },
+                            "path": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "description": "Base path for paginator generated URLs."
+                            },
+                            "per_page": {
+                              "type": "integer",
+                              "description": "Number of items shown per page.",
+                              "minimum": 0
+                            },
+                            "to": {
+                              "type": [
+                                "integer",
+                                "null"
+                              ],
+                              "description": "Number of the last item in the slice.",
+                              "minimum": 1
+                            },
+                            "total": {
+                              "type": "integer",
+                              "description": "Total number of items being paginated.",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "current_page",
+                            "from",
+                            "last_page",
+                            "links",
+                            "path",
+                            "per_page",
+                            "to",
+                            "total"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "data",
+                        "links",
+                        "meta"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "400": {
+            "description": "If no search parameters are provided, return error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "errors": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "message": {
+                              "type": "string",
+                              "const": "Please provide either a company name or a postal code to search."
+                            }
+                          },
+                          "required": [
+                            "message"
+                          ]
+                        }
+                      ],
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "additionalItems": false
+                    }
+                  },
+                  "required": [
+                    "errors"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationException"
+          }
+        }
+      }
+    },
+    "/v1/company/search/address": {
+      "get": {
+        "operationId": "searchCompanyByAddress",
+        "description": "Searches for Belgian companies using address information such as street name,\nhouse number, city, or postal code. All parameters are optional but at least\none must be provided. Results are filtered by the combination of provided parameters.",
+        "summary": "Search for companies by address components",
+        "tags": [
+          "Companies",
+          "SearchCompanyByAddress"
+        ],
+        "parameters": [
+          {
+            "name": "street",
+            "in": "query",
+            "description": "Street name or partial street address",
+            "schema": {
+              "type": "string"
+            },
+            "example": "Rue de la Loi"
+          },
+          {
+            "name": "house_number",
+            "in": "query",
+            "description": "House number",
+            "schema": {
+              "type": "string"
+            },
+            "example": "10"
+          },
+          {
+            "name": "city",
+            "in": "query",
+            "description": "City name",
+            "schema": {
+              "type": "string"
+            },
+            "example": "Brussels"
+          },
+          {
+            "name": "post_code",
+            "in": "query",
+            "description": "4-digit Belgian postal code",
+            "schema": {
+              "type": "integer"
+            },
+            "example": 1000
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated set of `CompanyResource`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CompanyResource"
+                      }
+                    },
+                    "links": {
+                      "type": "object",
+                      "properties": {
+                        "first": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "last": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "prev": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "next": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "first",
+                        "last",
+                        "prev",
+                        "next"
+                      ]
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "current_page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "from": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1
+                        },
+                        "last_page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "links": {
+                          "type": "array",
+                          "description": "Generated paginator links.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "url": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "active": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "url",
+                              "label",
+                              "active"
+                            ]
+                          }
+                        },
+                        "path": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Base path for paginator generated URLs."
+                        },
+                        "per_page": {
+                          "type": "integer",
+                          "description": "Number of items shown per page.",
+                          "minimum": 0
+                        },
+                        "to": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "description": "Number of the last item in the slice.",
+                          "minimum": 1
+                        },
+                        "total": {
+                          "type": "integer",
+                          "description": "Total number of items being paginated.",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "current_page",
+                        "from",
+                        "last_page",
+                        "links",
+                        "path",
+                        "per_page",
+                        "to",
+                        "total"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "links",
+                    "meta"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "errors": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "message": {
+                              "type": "string",
+                              "const": "Please provide at least one address parameter (street, house_number, city, or post_code) to search."
+                            }
+                          },
+                          "required": [
+                            "message"
+                          ]
+                        }
+                      ],
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "additionalItems": false
+                    }
+                  },
+                  "required": [
+                    "errors"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationException"
+          }
+        }
+      }
+    },
+    "/v1/company/{cbeNumber}": {
+      "get": {
+        "operationId": "getCompanyInfoByBCE",
+        "description": "Retrieves detailed information about a specific Belgian company using its BCE (Banque-Carrefour des Entreprises) number.\nThe BCE number can be provided in various formats (with or without dots, spaces, or the 'BE' prefix).",
+        "summary": "Get company information by BCE number",
+        "tags": [
+          "Companies",
+          "GetCompanyInfoByBCE"
+        ],
+        "parameters": [
+          {
+            "name": "cbeNumber",
+            "in": "path",
+            "required": true,
+            "description": "The BCE number of the company (e.g., \"0123456789\", \"0123.456.789\", \"BE0123456789\")",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`CompanyResource`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CompanyResource"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "errors": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "message": {
+                              "type": "string",
+                              "const": "Company not found"
+                            }
+                          },
+                          "required": [
+                            "message"
+                          ]
+                        }
+                      ],
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "additionalItems": false
+                    }
+                  },
+                  "required": [
+                    "errors"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/establishment/{establishmentNumber}": {
+      "get": {
+        "operationId": "getEstablishmentInfo",
+        "description": "Retrieves a single Belgian establishment by its establishment number. This\nis the only way to reach **branches** (succursales): they carry a\n`9.xxx.xxx.xxx` number, are not attached to any enterprise, and therefore\nnever appear in a company's `establishments` list nor in search results.\nRegular establishment units (`2.xxx.xxx.xxx`) are also resolvable here.\nThe number can be provided in various formats (with or without dots, spaces,\nor the 'BE' prefix).",
+        "summary": "Get establishment information by establishment number",
+        "tags": [
+          "Establishments",
+          "GetEstablishmentInfo"
+        ],
+        "parameters": [
+          {
+            "name": "establishmentNumber",
+            "in": "path",
+            "required": true,
+            "description": "The establishment or branch number (e.g., \"2148022834\", \"2.148.022.834\", \"9000006626\")",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`EstablishmentResource`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/EstablishmentResource"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "errors": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "message": {
+                              "type": "string",
+                              "const": "Establishment not found"
+                            }
+                          },
+                          "required": [
+                            "message"
+                          ]
+                        }
+                      ],
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "additionalItems": false
+                    }
+                  },
+                  "required": [
+                    "errors"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/juridical-forms": {
+      "get": {
+        "operationId": "juridicalForm.index",
+        "description": "Returns all available juridical forms with their codes and descriptions.\nSupports localization for descriptions in multiple languages (FR, NL, EN, DE).",
+        "summary": "Get all juridical forms",
+        "tags": [
+          "JuridicalForm"
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "const": 200
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/juridical-forms/{code}/companies": {
+      "get": {
+        "operationId": "juridicalForm.companies",
+        "description": "Returns a paginated list of companies that have a specific juridical form.",
+        "summary": "Get companies by juridical form",
+        "tags": [
+          "JuridicalForm"
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "The juridical form code (e.g., \"017\" for NV)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated set of `CompanyResource`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CompanyResource"
+                      }
+                    },
+                    "links": {
+                      "type": "object",
+                      "properties": {
+                        "first": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "last": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "prev": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "next": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "first",
+                        "last",
+                        "prev",
+                        "next"
+                      ]
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "current_page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "from": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1
+                        },
+                        "last_page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "links": {
+                          "type": "array",
+                          "description": "Generated paginator links.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "url": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "active": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "url",
+                              "label",
+                              "active"
+                            ]
+                          }
+                        },
+                        "path": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "Base path for paginator generated URLs."
+                        },
+                        "per_page": {
+                          "type": "integer",
+                          "description": "Number of items shown per page.",
+                          "minimum": 0
+                        },
+                        "to": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "description": "Number of the last item in the slice.",
+                          "minimum": 1
+                        },
+                        "total": {
+                          "type": "integer",
+                          "description": "Total number of items being paginated.",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "current_page",
+                        "from",
+                        "last_page",
+                        "links",
+                        "path",
+                        "per_page",
+                        "to",
+                        "total"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "links",
+                    "meta"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "const": "Juridical form not found."
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/juridical-situations": {
+      "get": {
+        "operationId": "juridicalSituation.index",
+        "description": "Returns all available juridical situations with their codes and descriptions.\nSupports localization for descriptions in multiple languages (FR, NL, EN, DE).",
+        "summary": "Get all juridical situations",
+        "tags": [
+          "JuridicalSituation"
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "const": 200
+                }
+              }
+            },
+            "headers": {
+              "X-Data-Freshness": {
+                "description": "Freshness tier of the company data: `monthly` (free plan, frozen snapshot) or `live` (paid plan, daily updates).",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "monthly",
+                    "live"
+                  ]
+                },
+                "example": "live"
+              },
+              "X-Data-As-Of": {
+                "description": "Date the served data reflects (YYYY-MM-DD). Omitted when not yet known.",
+                "schema": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "example": "2026-06-01"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "http": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "CompanyResource": {
+        "type": "object",
+        "properties": {
+          "cbe_number": {},
+          "cbe_number_formatted": {},
+          "denomination": {
+            "type": "string",
+            "examples": [
+              "ACME COMPANY"
+            ]
+          },
+          "abbreviation": {
+            "type": "string",
+            "examples": [
+              "ACME"
+            ]
+          },
+          "commercial_name": {
+            "type": "string",
+            "examples": [
+              "ACME TRADE"
+            ]
+          },
+          "branch_name": {
+            "type": "string",
+            "examples": [
+              "ACME BRUSSELS"
+            ]
+          },
+          "denomination_with_legal_form": {
+            "type": "string",
+            "examples": [
+              "ACME COMPANY SPRL"
+            ]
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "street_number": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "box": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "extra_info": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "post_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "city": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "country_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "full_address": {
+                "type": "string"
+              },
+              "date_striking_off": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "street",
+              "street_number",
+              "box",
+              "extra_info",
+              "post_code",
+              "city",
+              "country_code",
+              "full_address",
+              "date_striking_off"
+            ]
+          },
+          "establishments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EstablishmentResource"
+            }
+          },
+          "juridical_form": {
+            "type": "string",
+            "examples": [
+              "Société privée à responsabilité limitée"
+            ]
+          },
+          "juridical_form_code": {
+            "type": "string",
+            "examples": [
+              "001"
+            ]
+          },
+          "juridical_form_short": {
+            "type": "string",
+            "description": "* @example \"SPRL\""
+          },
+          "status": {
+            "type": "string",
+            "const": "active",
+            "examples": [
+              "active"
+            ]
+          },
+          "juridical_situation": {
+            "type": "string",
+            "examples": [
+              "Normal situation"
+            ]
+          },
+          "juridical_situation_code": {
+            "type": "string",
+            "examples": [
+              "001"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "examples": [
+              "legal_person"
+            ]
+          },
+          "pretty_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "Personne morale"
+            ]
+          },
+          "start_date": {
+            "type": "string",
+            "examples": [
+              "2020-01-15"
+            ]
+          },
+          "contact_infos": {
+            "type": "object",
+            "properties": {
+              "email": {
+                "type": "string",
+                "examples": [
+                  "contact@acme.be"
+                ]
+              },
+              "phone": {
+                "type": "string",
+                "examples": [
+                  "+32 2 123 45 67"
+                ]
+              },
+              "web": {
+                "type": "string",
+                "examples": [
+                  "https://acme.be"
+                ]
+              }
+            },
+            "required": [
+              "email",
+              "phone",
+              "web"
+            ]
+          },
+          "nace_activities": {
+            "type": "array",
+            "examples": [
+              [
+                {
+                  "code": "62010",
+                  "description": "Computer programming activities",
+                  "classification": "main",
+                  "nace_version": "2008"
+                }
+              ]
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "examples": [
+                    "62010"
+                  ]
+                },
+                "description": {
+                  "type": "array",
+                  "examples": [
+                    "Computer programming activities"
+                  ],
+                  "items": {}
+                },
+                "classification": {
+                  "type": "string",
+                  "examples": [
+                    "main"
+                  ]
+                },
+                "nace_version": {
+                  "type": "string",
+                  "examples": [
+                    "2008"
+                  ]
+                }
+              },
+              "required": [
+                "code",
+                "description",
+                "classification",
+                "nace_version"
+              ]
+            }
+          }
+        },
+        "required": [
+          "cbe_number",
+          "cbe_number_formatted",
+          "denomination",
+          "abbreviation",
+          "commercial_name",
+          "branch_name",
+          "denomination_with_legal_form",
+          "address",
+          "establishments",
+          "juridical_form",
+          "juridical_form_code",
+          "juridical_form_short",
+          "status",
+          "juridical_situation",
+          "juridical_situation_code",
+          "type",
+          "pretty_type",
+          "start_date",
+          "contact_infos",
+          "nace_activities"
+        ],
+        "title": "CompanyResource"
+      },
+      "EstablishmentResource": {
+        "type": "object",
+        "properties": {
+          "cbe_number": {
+            "type": "string",
+            "examples": [
+              "0123456789"
+            ]
+          },
+          "establishment_number": {
+            "type": "string",
+            "examples": [
+              "2148022834"
+            ]
+          },
+          "start_date": {
+            "type": "string",
+            "description": "Date the establishment unit (or branch) was created (BCE StartDate).",
+            "examples": [
+              "1995-09-01"
+            ]
+          },
+          "street": {
+            "type": "string",
+            "examples": [
+              "Avenue Louise"
+            ]
+          },
+          "post_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "1000"
+            ]
+          },
+          "city": {
+            "type": "string",
+            "examples": [
+              "Brussels"
+            ]
+          },
+          "house_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "1"
+            ]
+          },
+          "box": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "examples": [
+              "B"
+            ]
+          },
+          "extra_info": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-form address complement (floor, \"Résidence X\"…), null when absent.",
+            "examples": [
+              "3ème étage"
+            ]
+          },
+          "country_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 3166-1 alpha-2 country code",
+            "examples": [
+              "BE"
+            ]
+          },
+          "full_address": {
+            "type": "string",
+            "examples": [
+              "Avenue Louise 1 B 1000 Brussels BE"
+            ]
+          },
+          "type_of_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Type of the establishment address (BCE/KBO TypeOfAddress).\nIn practice the BCE Open Data only emits two values here:\n - `establishment_unit` (BAET): the address of an establishment unit\n   belonging to a Belgian enterprise (the vast majority of records).\n - `branch` (ABBR): the address of a branch (succursale). These carry a\n   9.xxx.xxx.xxx number in `establishment_number` and are attached to\n   their parent enterprise (BCE branch.csv EnterpriseNumber), so they\n   appear in that company's `establishments` list like any other unit.\n`oldest_active_establishment` (OBAD) is defined by BCE but never present\nin the current Open Data, so it is not returned. The registered office\n(REGO) is exposed on the company `address` object, not here.",
+            "examples": [
+              "establishment_unit"
+            ]
+          },
+          "date_striking_off": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Date the address was struck off (radiée), null if still active",
+            "examples": [
+              "2024-03-15"
+            ]
+          }
+        },
+        "required": [
+          "cbe_number",
+          "establishment_number",
+          "start_date",
+          "street",
+          "post_code",
+          "city",
+          "house_number",
+          "box",
+          "extra_info",
+          "country_code",
+          "full_address",
+          "type_of_address",
+          "date_striking_off"
+        ],
+        "title": "EstablishmentResource"
+      }
+    },
+    "responses": {
+      "ValidationException": {
+        "description": "Validation error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "description": "Errors overview."
+                },
+                "errors": {
+                  "type": "object",
+                  "description": "A detailed description of each field that failed validation.",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "message",
+                "errors"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
