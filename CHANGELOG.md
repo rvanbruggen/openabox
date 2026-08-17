@@ -3,6 +3,49 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.8.1] — 2026-08-16
+
+### Fixed
+- **The documented update command silently did not update anything.** README
+  *Updating* gave `git pull && docker compose up -d`. Application code is
+  bind-mounted, so the pull does put the new files inside the container — but
+  `up -d` only recreates a container when its *configuration* changes, and a
+  release touching no ports, volumes or environment leaves the compose spec
+  identical. Compose reports the service up-to-date, does nothing, and the
+  running process carries on with the old code already imported. Nothing errors;
+  the version in the UI header simply never moves. Observed on the 0.7.0 → 0.8.0
+  deployment, which reported 0.7.0 from a host whose files were at 0.8.0.
+
+  *Updating* now leads with `docker compose restart api`, explains why `up -d`
+  is not enough, tells you to confirm against `GET /health` — which reads the
+  version from the code actually loaded, so it cannot agree with disk unless the
+  restart took — and gives the right command per kind of change:
+
+  | What changed | Command |
+  |---|---|
+  | Application code only | `docker compose restart api` |
+  | `requirements.txt` | `docker compose up -d --build` |
+  | `docker-compose.yml` or `.env` | `docker compose up -d` |
+
+  It also notes that schema changes are applied at API startup, so a restart
+  covers those, and that the browser needs a hard reload because the stylesheet
+  and script are served without cache-busting.
+
+### Added
+- **The API reloads itself when its source changes.** `--reload` in the
+  Dockerfile makes the read-only bind mount of `./api/app` mean something: a
+  `git pull` on the host is picked up by the running container within a second
+  or two, rather than sitting there invisibly until someone restarts it. This
+  removes the whole class of failure above, not just its documentation.
+  `--reload-dir /srv/app` confines the watcher to the mounted source, since
+  unscoped it would also watch `site-packages` — a large tree that never
+  changes here. No new dependency: `watchfiles` already ships with
+  `uvicorn[standard]`.
+
+  **Upgrading from 0.8.0 or earlier takes one rebuild** — `docker compose up -d
+  --build` — because the flag is part of the image. After that `git pull` is
+  enough.
+
 ## [0.8.0] — 2026-08-16
 
 ### Added

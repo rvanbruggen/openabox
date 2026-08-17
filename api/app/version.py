@@ -10,7 +10,7 @@ UI and in /docs are the ones in the LICENSE file next to the code that is
 running, not a string typed into a template months ago.
 """
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 
 __license__ = "MIT"
 __license_url__ = "https://github.com/rvanbruggen/openabox/blob/main/LICENSE"

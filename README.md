@@ -11,7 +11,7 @@ the host you put it on. See [Installation](#installation) to get it running.
 
 ## Version
 
-**0.8.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.8.1** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -21,13 +21,13 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.8.0` |
+| Git | annotated tag `v0.8.1` |
 
 The licence follows the same route — `__license__` in the same file, reported
 by `/health`, rendered in `/docs` and in the UI footer.
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.8.0`, that is the code answering.
+actually running — if the header says `v0.8.1`, that is the code answering.
 
 ## Status
 
@@ -146,12 +146,37 @@ remotely, do it over a VPN or behind an authenticating reverse proxy.
 
 ```bash
 git pull
-docker compose up -d
+curl -s http://localhost:8000/health    # confirm the version changed
 ```
 
-Application code is bind-mounted, so `docker compose restart api` is enough for
-a code-only change; a dependency change in `requirements.txt` needs
-`docker compose up -d --build`.
+The API watches its own source, so a `git pull` is picked up within a second or
+two and no restart is normally needed. Confirm with `/health`: it reports the
+version from the code actually loaded in the process, so it cannot agree with
+what is on disk unless the reload really happened.
+
+| What changed | Command |
+|---|---|
+| Application code only | `git pull` — the running container reloads itself |
+| `requirements.txt` | `docker compose up -d --build` |
+| `docker-compose.yml` or `.env` | `docker compose up -d` |
+| Nothing took effect | `docker compose restart api` |
+
+**Why `docker compose up -d` is not the answer for a code change.** It only
+recreates a container when its *configuration* changes, and a release touching
+no ports, volumes or environment leaves the compose spec identical — so Compose
+reports the service up-to-date, does nothing, and the old process carries on
+with the code it imported at startup. Nothing errors; the version simply never
+moves. That is what auto-reload exists to prevent, and `restart` is what to
+reach for if it ever does happen anyway.
+
+> **Upgrading from 0.8.0 or earlier:** auto-reload is part of the image, so it
+> takes one rebuild to switch on — `docker compose up -d --build`. After that,
+> `git pull` is enough.
+
+Schema changes — new indexes and constraints — are applied at API startup, so a
+restart covers those too. In the browser, hard-reload (⇧⌘R / Ctrl-F5) after a
+UI change: the stylesheet and script are served without cache-busting, so a
+normal reload can leave you looking at the previous version's assets.
 
 ### Stopping and removing
 
