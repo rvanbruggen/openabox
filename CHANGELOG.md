@@ -5,6 +5,18 @@ While the major version is 0, the interface may change between minor versions.
 
 ## [0.6.0] — 2026-08-16
 
+> **Corrected after tagging.** This entry originally recorded the NBB citation
+> links as groundwork that "nothing calls yet, so they change no behaviour".
+> That described commit `bf785ca` in isolation, not the tag: by `v0.6.0` the
+> financials panel rendered a Source column and a Sources block, and
+> `/api/company/{cbe}/financials` returned `source_urls` on every row. The
+> behaviour did change, and the entry now says so.
+>
+> This is the mirror of the 0.4.0 problem recorded under 0.5.0. There a tag
+> shipped more than its changelog mentioned; here a note asserted that a shipped
+> feature was inert — worse, because it is the kind of line you would trust
+> later while wondering why the links were not appearing.
+
 ### Added
 - **Table browser.** A *Graph / Table* switch in the header swaps the canvas for
   a sortable, filterable table of anything in the graph: companies, people,
@@ -30,6 +42,27 @@ While the major version is 0, the interface may change between minor versions.
 - [`api/tests/test_browse.py`](api/tests/test_browse.py) — 22 tests covering
   registry integrity, the rejection of unknown tables, columns and sort keys,
   filter-operator parsing and CSV flattening.
+- **Source links in the financials panel.** Every figure shown is derived, so
+  the panel cites the filings it was derived from: a *Source* column linking
+  each year to that year's accounts as published, and a *Sources* block listing
+  every filing in all three formats the NBB serves — PDF (the document as
+  published), XBRL, and CSV (the flattened rubriek codes this app parses) —
+  each with its reference number, plus a link to the company's full filing list.
+  The shareholder panel links its filing too. `source_urls` is returned by
+  `/api/company/{cbe}/financials` and `/api/company/{cbe}/shareholders`.
+- `enterprise_url()` and `deposit_urls()` in
+  [`cbso_client.py`](api/app/cbso_client.py) build those links, with 4 tests in
+  [`api/tests/test_cbso_client.py`](api/tests/test_cbso_client.py). The two NBB
+  backends identify a filing differently — Consult by GUID, the official web
+  services by reference number — and only the GUID resolves publicly, so a
+  reference number yields **no link** rather than one that 404s. A dead citation
+  is worse than none: it implies the source was checked.
+
+### Fixed
+- `.menu-note` was scoped as `.menu .menu-note`, so every note outside the
+  right-click menu — the "figures are as filed" line, the shareholder panel's
+  disclaimer — rendered at full body size instead of 11px muted. The type rules
+  are now unscoped and only the menu's padding is scoped.
 
 ### Notes
 - **Every table lists the local cache, not the register.** Each carries a scope
@@ -44,11 +77,9 @@ While the major version is 0, the interface may change between minor versions.
   builds its query as a string. Read-only transactions do not close that hole.
   Every entity, column and sort key is therefore resolved against a server-side
   registry and rejected if unknown; only filter *values* travel as parameters.
-- **Also in this tag, not yet wired up:** `enterprise_url()` and
-  `deposit_urls()` in [`cbso_client.py`](api/app/cbso_client.py), which build
-  public NBB Consult links for a filing, with tests. Nothing calls them yet, so
-  they change no behaviour — recorded here rather than shipped silently, which
-  is what 0.4.0 did.
+- Commit `bf785ca` is titled "groundwork, not yet wired up". That described the
+  commit, not the tag — the wiring followed in the same release. Corrected in
+  0.6.1 above; the message itself is already pushed and left alone.
 
 ## [0.5.1] — 2026-08-16
 
