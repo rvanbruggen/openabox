@@ -32,6 +32,7 @@ Quirks found by probing the Consult API, all of which are load-bearing below:
 """
 
 import logging
+import re
 import uuid
 
 import httpx
@@ -47,6 +48,39 @@ _BROWSER_UA = (
 
 # Filings we can actually parse. Anything else is a scanned image.
 MACHINE_READABLE = {"XBRL", "ZIP"}
+
+# Consult addresses a filing by GUID; the official web services address the same
+# filing by reference number ("2025-00539072"). Only the GUID resolves on the
+# public portal, so citation links are emitted for it alone rather than
+# constructing URLs that would 404.
+_GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def enterprise_url(cbe_number: str) -> str:
+    """The public Consult page listing every filing for a company.
+
+    Always valid, whichever backend supplied the data, so this is the fallback
+    citation when a specific filing cannot be linked directly.
+    """
+    return f"{config.CBSO_CONSULT_URL}/consult-enterprise/{cbe_number}"
+
+
+def deposit_urls(deposit_id: str | None) -> dict[str, str] | None:
+    """Public links to one filing, or None if it cannot be addressed publicly.
+
+    These are citation links for a human to click, not fetch targets — which is
+    why they point at the NBB rather than being proxied through this app. The
+    figures shown in the UI should be checkable against the original document
+    without taking anyone's word for the extraction.
+    """
+    if not deposit_id or not _GUID.match(str(deposit_id)):
+        return None
+    base = f"{config.CBSO_CONSULT_URL}/api/external/broker/public/deposits"
+    return {
+        "pdf": f"{base}/pdf/{deposit_id}",
+        "xbrl": f"{base}/xbrl/{deposit_id}",
+        "csv": f"{base}/consult/csv/{deposit_id}",
+    }
 
 
 class CBSOError(RuntimeError):
