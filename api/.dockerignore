@@ -1,0 +1,7 @@
+# Keep local build artefacts and virtualenvs out of the image
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+tests/
+.pytest_cache/

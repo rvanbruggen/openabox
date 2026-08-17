@@ -751,6 +751,11 @@ async def financials_series(
         "series": series,
         "fetched": fetched,
         "from_cache": len(series) - fetched,
+        # The portal's address is configuration, so the link to the company's
+        # filing list is built here rather than assembled again in the browser.
+        # It is also the fallback citation when an individual filing has no
+        # public URL.
+        "enterprise_url": cbso_client.enterprise_url(cbe_number),
         # Filing model is surfaced per year because the abbreviated scheme does
         # not disclose turnover: a missing bar is "not filed", not "zero".
         "note": "Abbreviated and micro filings do not disclose turnover.",

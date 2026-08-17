@@ -3,6 +3,88 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.7.0] — 2026-08-16
+
+### Fixed
+- **Right-clicking a node expanded it before you chose anything.** The
+  `mousedown` handler did not check which button was pressed, so a right-click
+  started a drag that `mouseup` then completed as a click — and a click on a
+  node means "expand". Opening the context menu therefore fetched and drew the
+  node's neighbours on its own. Because the canvas had already changed
+  identically before any item was picked, all three menu items appeared to do
+  the same thing. They never did: *Investigate ownership* fetches a filing and
+  adds owners and directors, *Financials over time* fetches several years and
+  only opens the side panel, and *Expand neighbours* draws what the graph
+  already holds without touching the network. The handler now ignores
+  non-primary buttons; left-click still expands exactly as before.
+- Each menu item now carries a sub-label saying what it costs and what it
+  changes — two reach the NBB, one is local; two alter the graph, one does not.
+  The names alone did not distinguish them, which is what made the bug above
+  read as "these are duplicates" rather than "something else is firing".
+
+### Changed
+- *Investigate shareholders* is now *Investigate ownership*: it has always also
+  returned directors, participations and the auditor.
+- [shareholders.md](shareholders.md) is marked **implemented** rather than
+  "research complete, nothing implemented", with a table mapping each part of
+  the research to the module that now does it, and a note on the two things the
+  research got wrong — the participations note being less useful than the filing
+  form's own shareholder section, and coverage being more uneven than three
+  samples suggested.
+
+### Changed — deployment
+- **The repository no longer assumes the machine it was written on.** The README
+  gave the author's Docker host by IP address as the place the stack lives, so
+  the install instructions only worked for one person. It now documents
+  requirements, a clone-and-run install, every configuration variable, network
+  exposure, updating, removal and troubleshooting — all against `localhost`,
+  with the note that another host on your network differs by hostname only. The
+  UI already called the API on its own origin, so no code had a base URL to
+  un-hardcode.
+- **Host, ports and Neo4j memory are configuration, not constants.**
+  `OPENABOX_BIND`, `OPENABOX_API_PORT`, `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`,
+  `NEO4J_HEAP_INITIAL`, `NEO4J_HEAP_MAX` and `NEO4J_PAGECACHE` all take their
+  previous values as defaults, so an existing deployment is unaffected — but a
+  host with a busy port 8000 or less RAM to spare no longer needs the compose
+  file edited. `OPENABOX_BIND=127.0.0.1` keeps an instance off the network
+  entirely, which the README now recommends where only the host itself needs
+  access.
+- **`docker compose up` works on a fresh clone with no `.env` present.** The API
+  service required that file to exist and refused to start without it; it is now
+  declared optional, so the stack comes up and the missing key is reported by
+  the lookup that needs it. This requires Docker Compose v2.24 or newer, which
+  the README states as a requirement.
+- [`.env.example`](.env.example) documents every variable the app reads, grouped
+  by what it affects, including the ones that were only discoverable by reading
+  `config.py`: `OPENABOX_CACHE_TTL_DAYS` and `OPENABOX_LANG`.
+
+### Added
+- `api/.dockerignore`, so local `__pycache__`, virtualenvs and test files stay
+  out of the image.
+- A **Citing the source** section in the README, documenting the NBB source
+  links shipped in 0.6.0 — what each one points at, why both PDF and CSV are
+  offered, and why a filing identified by reference number rather than GUID
+  shows no link.
+- `/api/company/{cbe}/financials` now returns `enterprise_url`.
+
+### Fixed
+- **The NBB portal address was hardcoded in the frontend.** `enterprise_url()`
+  existed in [`cbso_client.py`](api/app/cbso_client.py) but nothing called it,
+  while `app.js` built the same URL from a literal — so the one address that
+  `CBSO_CONSULT_URL` was supposed to own lived in two places, and changing the
+  configured value would have left the UI pointing at the old host. The link is
+  now built server-side and passed through, on the same rule as the version,
+  the licence and the browse registry. Absent from an older cached response, the
+  Sources block omits the footer link rather than emitting `href="undefined"`.
+
+### Removed
+- **The legacy environment-variable name for the CBE key.** `config.py` read a
+  second, hyphenated name left over from the first `.env` this project had, and
+  it named that key in the source of a public repository. Only `CBE_API_KEY` is
+  read now. **An `.env` still using the old name must rename that line**, or the
+  API starts with no key and every register lookup fails — `GET /health` reports
+  `cbe_api_key_configured: false` when that has happened.
+
 ## [0.6.0] — 2026-08-16
 
 > **Corrected after tagging.** This entry originally recorded the NBB citation
@@ -79,7 +161,8 @@ While the major version is 0, the interface may change between minor versions.
   registry and rejected if unknown; only filter *values* travel as parameters.
 - Commit `bf785ca` is titled "groundwork, not yet wired up". That described the
   commit, not the tag — the wiring followed in the same release. Corrected in
-  0.6.1 above; the message itself is already pushed and left alone.
+  the note at the top of this entry; the message itself is already pushed and
+  left alone.
 
 ## [0.5.1] — 2026-08-16
 

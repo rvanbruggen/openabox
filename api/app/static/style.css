@@ -277,6 +277,13 @@ dl.props dd { margin: 0; word-break: break-word; }
 }
 .menu button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
 .menu button:disabled { color: var(--muted); cursor: default; }
+/* Each action says what it costs and what it changes — two of the three reach
+   the NBB, one is local, and only two alter the graph. */
+.menu button small {
+  display: block; font-size: 10.5px; font-weight: 400;
+  color: var(--muted); margin-top: 1px; line-height: 1.35;
+}
+.menu button:hover:not(:disabled) small { color: inherit; opacity: .8; }
 /* Small print. Used both inside the right-click menu and standalone in the
    panels, so the type rules are unscoped and only the menu's padding is
    scoped — a `.menu`-only selector left every standalone note rendering at

@@ -3,7 +3,8 @@
  * Deliberately dependency-free: no build step, no CDN, no npm. The force
  * layout below is a plain velocity-Verlet simulation, which is ample for the
  * few hundred nodes a company neighbourhood produces and keeps the whole app
- * runnable offline on a private Docker host.
+ * loadable from the API container alone — no CDN, so the browser never has to
+ * reach anything but the host serving it.
  */
 
 /* Warm, kraft-leaning palette to match the chrome, while keeping the labels
@@ -347,6 +348,11 @@ function toWorld(evt) {
 }
 
 svg.addEventListener('mousedown', (evt) => {
+  // Primary button only. Without this a right-click also starts a "drag" that
+  // the mouseup handler then completes as a click — so opening the context
+  // menu expanded the node's neighbours before the user had chosen anything,
+  // making all three menu items look like they did the same thing.
+  if (evt.button !== 0) return;
   const g = evt.target.closest('.node');
   if (g) {
     const node = state.nodes.get(g.dataset.id);
@@ -448,15 +454,23 @@ svg.addEventListener('contextmenu', (evt) => {
   // the NBB. Say so rather than offering an action that cannot work.
   const canInvestigate = isCompany && Boolean(cbe);
 
+  // The three differ in what they cost and what they change: two fetch from the
+  // NBB, one is local; two add to the graph, one only opens a panel. The
+  // sub-labels say which, because the names alone did not.
   nodeMenu.innerHTML = `
     <div class="menu-title">${caption(node)}</div>
     <button id="menu-investigate" ${canInvestigate ? '' : 'disabled'}>
-      Investigate shareholders (NBB)
+      Investigate ownership
+      <small>Fetch the latest filing · adds owners and directors to the graph</small>
     </button>
     <button id="menu-financials" ${canInvestigate ? '' : 'disabled'}>
       Financials over time
+      <small>Fetch several years · opens the side panel, graph unchanged</small>
     </button>
-    <button id="menu-expand">Expand neighbours</button>
+    <button id="menu-expand">
+      Expand neighbours
+      <small>Local only · draws what the graph already holds</small>
+    </button>
     ${canInvestigate ? '' :
       `<div class="menu-note">${isCompany
         ? 'No CBE number — not in the Belgian register.'
@@ -671,7 +685,7 @@ async function showFinancials(node, cbe) {
         </tr>`).join('')}</tbody>
     </table>
 
-    ${sourceList(rows, data.cbe_number)}`;
+    ${sourceList(rows, data.enterprise_url)}`;
 }
 
 /* Per-year link straight to the filed document at the NBB. The PDF is the one
@@ -687,8 +701,7 @@ function sourceCell(r) {
  * formats the NBB publishes, plus the company's own page on the portal. The
  * reference number is shown because it identifies the filing when a URL is not
  * usable — quoting a figure in writing, for instance. */
-function sourceList(rows, cbe) {
-  const enterprise = `https://consult.cbso.nbb.be/consult-enterprise/${encodeURIComponent(cbe)}`;
+function sourceList(rows, enterprise) {
   const items = rows.slice().reverse().map((r) => {
     const label = `${esc(r.year)} <span class="ref">${esc(r.model_id || '')}` +
       `${r.reference ? ` · ${esc(r.reference)}` : ''}</span>`;
@@ -704,8 +717,8 @@ function sourceList(rows, cbe) {
     <p class="sub">Every figure above is read from these filings. PDF is the
       document as published; CSV is the flattened rubriek codes this app parses.</p>
     <ul>${items}</ul>
-    <p class="sub"><a href="${esc(enterprise)}" target="_blank" rel="noopener">
-      All filings for this company at the NBB ›</a></p>
+    ${enterprise ? `<p class="sub"><a href="${esc(enterprise)}" target="_blank"
+      rel="noopener">All filings for this company at the NBB ›</a></p>` : ''}
     <p class="menu-note">Figures are as filed and not restated. Links go to the
       National Bank's public Consult portal.</p>
   </div>`;

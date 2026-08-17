@@ -1,12 +1,36 @@
 # Shareholder data for OpenABox — research
 
-Status: **research complete, nothing implemented.** Every endpoint and every
-field below was verified against live data on 2026-08-16; the sample companies
-are named so the checks can be repeated.
+Status: **implemented.** This document is the research that preceded the build,
+kept as the record of where the data comes from and why the design is what it
+is. Every endpoint and field below was verified against live data on
+2026-08-16; the sample companies are named so the checks can be repeated.
+
+What shipped, and where it lives now:
+
+| This document proposed | Implemented in |
+|---|---|
+| Route A, the credential-free Consult API | [`cbso_client.py`](api/app/cbso_client.py) |
+| Route B, the official web services | same client, via `CBSO_SUBSCRIPTION_KEY` |
+| Dimensional XBRL extraction | [`xbrl.py`](api/app/xbrl.py) |
+| Ownership edges keyed by `as_of` | [`ingest.py`](api/app/ingest.py) |
+| Constructed keys for natural persons | [`identity.py`](api/app/identity.py) |
+| Rubriek-code financials | [`financials.py`](api/app/financials.py) |
+| Route C, Staatsblad, for changes between filings | **not implemented** |
+
+Two things this research got wrong, corrected by building it:
+
+- The participations note was expected to be the workhorse. In practice the
+  filing form's own identification section carries shareholders for ordinary
+  companies, which is a stronger source — and directors come with it, removing
+  the need to scrape Staatsblad PDFs for officers.
+- Coverage is more uneven than the three verified samples suggested. Korys NV,
+  a private holding, files no shareholder section at all. The
+  [open question](#open-questions) about fill rates across a random sample is
+  still open and still the first thing worth measuring.
 
 ## Summary
 
-The README currently assumes ownership has to be stitched together from
+*(Written before the build.)* The README at the time assumed ownership had to be stitched together from
 Staatsblad incorporation deeds (stale) plus NBB participations (rare). That
 assumption is wrong, and it is wrong in a useful direction.
 
@@ -274,9 +298,8 @@ reusable for the postcode discriminator, and the same building-level `Address`
 node design will make "these two people share a home address" a traversal.
 
 **Privacy note:** these filings contain private individuals' home addresses.
-For a local-only personal tool that is lawful, but it is a good reason to keep
-OpenABox unexposed as the briefing already intends, and not to add any export
-feature casually.
+For a self-hosted personal tool that is lawful, but it is a good reason to keep
+an OpenABox instance unexposed, and not to add any export feature casually.
 
 ### Freshness and completeness
 

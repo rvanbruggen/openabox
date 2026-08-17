@@ -1,13 +1,17 @@
 # OpenABox
 
-A personal, local-only Belgian company lookup and graph exploration tool. Data
-comes from the CBE/KBO register via [cbeapi.be](https://cbeapi.be), is cached in
-a local Neo4j instance, and is explored from there — the API is not re-queried
-for records already held.
+A self-hosted Belgian company lookup and graph exploration tool. Data comes from
+the CBE/KBO register via [cbeapi.be](https://cbeapi.be), is cached in a Neo4j
+instance you run yourself, and is explored from there — the API is not
+re-queried for records already held.
+
+Everything runs in two containers on your own machine or network: nothing is
+sent anywhere except the register lookups themselves, and the graph never leaves
+the host you put it on. See [Installation](#installation) to get it running.
 
 ## Version
 
-**0.6.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.7.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,19 +21,19 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.6.0` |
+| Git | annotated tag `v0.7.0` |
 
 The licence follows the same route — `__license__` in the same file, reported
 by `/health`, rendered in `/docs` and in the UI footer.
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.6.0`, that is the code answering.
+actually running — if the header says `v0.7.0`, that is the code answering.
 
 ## Status
 
 | Component | State |
 |---|---|
-| Docker Compose stack (Neo4j + API) | Running |
+| Docker Compose stack (Neo4j + API) | Verified |
 | CBE API client | Verified against the live API |
 | Address + city canonicalisation | 17 unit tests passing; verified on live register data |
 | Graph schema + ingestion | Verified — provenance set, shared-address merging confirmed |
@@ -50,23 +54,140 @@ independent sources agree: Colruyt Group's own accounts say it holds 100 % of
 CGMI BV, and CGMI's accounts say Colruyt Group owns 100 % of it. Re-ingesting a
 filing leaves the edge count unchanged, so ingestion is idempotent.
 
-## Running it
+## Installation
 
-On the Docker host (192.168.68.78):
+### What you need
+
+| | |
+|---|---|
+| Docker Engine with Compose v2.24 or newer | `docker compose version` — v2.24 (Jan 2024) is where the optional `.env` support used here landed |
+| ~3 GB of free RAM | Neo4j is configured for a 2 GB heap plus a 1 GB page cache; both are tunable, see below |
+| A CBE API key | Free from [cbeapi.be](https://cbeapi.be). Without one the stack still starts, but no new company can be looked up |
+
+Nothing else is needed on the host: there is no Python, Node or build toolchain
+to install, and the web UI has no npm or CDN dependencies.
+
+### Getting it running
 
 ```bash
-cp .env.example .env    # then fill in CBE_API_KEY
+git clone https://github.com/rvanbruggen/openabox.git
+cd openabox
+cp .env.example .env
+```
+
+Open `.env` and set at least these two:
+
+- `CBE_API_KEY` — your key from cbeapi.be.
+- `NEO4J_PASSWORD` — **change it before the first start.** Neo4j bakes the
+  password into the database on its first run, so changing it later means
+  wiping the volume as well.
+
+Then bring the stack up:
+
+```bash
+docker compose up -d --build
+```
+
+The first start takes a minute or so: Neo4j has to initialise its store and
+install APOC, and the API waits for the database to report healthy before it
+starts. Watch it with `docker compose logs -f`, or check it is up with:
+
+```bash
+curl http://localhost:8000/health
+```
+
+### Where it lives
+
+| | Default URL |
+|---|---|
+| Web UI | `http://localhost:8000/` |
+| API docs (OpenAPI) | `http://localhost:8000/docs` |
+| Neo4j Browser | `http://localhost:7474/` (user `neo4j`, the password from your `.env`) |
+
+Running the stack on a different machine on your network — a NAS, a home
+server, a VM — changes nothing but the hostname: use that machine's address or
+name in place of `localhost`. The UI calls the API on the same origin it was
+served from, so it follows automatically and there is no base URL to configure.
+
+### Configuration
+
+Everything is set through `.env`, which Docker Compose reads automatically.
+[`.env.example`](.env.example) documents each one; the ones that matter most:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `CBE_API_KEY` | — | Key for the CBE/KBO register |
+| `NEO4J_PASSWORD` | `openabox-local` | Database password, fixed at first start |
+| `OPENABOX_BIND` | `0.0.0.0` | Interface the containers publish on. `127.0.0.1` keeps the stack to the host itself |
+| `OPENABOX_API_PORT` | `8000` | Host port for the API and UI |
+| `NEO4J_HTTP_PORT` / `NEO4J_BOLT_PORT` | `7474` / `7687` | Host ports for Neo4j |
+| `CBSO_SUBSCRIPTION_KEY` | — | Optional NBB web-services key; see [Rate limits](#rate-limits-and-why-the-cache-matters-here) |
+| `OPENABOX_CACHE_TTL_DAYS` | `90` | How long a company record is trusted |
+| `OPENABOX_CBSO_TTL_DAYS` | `180` | How long ownership and financial data are trusted |
+| `OPENABOX_LANG` | `nl` | Language for register labels (`nl`, `fr`, `de`) |
+| `NEO4J_HEAP_MAX`, `NEO4J_HEAP_INITIAL`, `NEO4J_PAGECACHE` | `2G`, `1G`, `1G` | Lower these on a small host |
+
+After changing `.env`, apply it with `docker compose up -d`.
+
+### Who can reach it
+
+There is **no authentication in front of the API**, and by default the ports
+are published on every interface — so anyone who can reach the host can read
+the graph and run Cypher against it. That graph contains the home addresses of
+private individuals named in annual accounts (see [Identity](#identity)).
+
+Treat it accordingly: keep it on a trusted network, and set
+`OPENABOX_BIND=127.0.0.1` if only the host itself needs access. Putting it on
+the public internet is not a supported configuration — if you must reach it
+remotely, do it over a VPN or behind an authenticating reverse proxy.
+
+### Updating
+
+```bash
+git pull
 docker compose up -d
 ```
 
-- API: `http://192.168.68.78:8000/docs`
-- Neo4j Browser: `http://192.168.68.78:7474`
+Application code is bind-mounted, so `docker compose restart api` is enough for
+a code-only change; a dependency change in `requirements.txt` needs
+`docker compose up -d --build`.
+
+### Stopping and removing
+
+```bash
+docker compose down       # stop; the graph is kept
+docker compose down -v    # stop and delete the database volumes as well
+```
+
+The cached graph lives in the `neo4j-data` volume. Back it up with a Neo4j dump
+or by archiving the volume — nothing in it is recoverable from this repo, only
+by re-querying the registers.
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `Bind for 0.0.0.0:8000 failed: port is already allocated` | Something else holds the port — set `OPENABOX_API_PORT` (or the Neo4j ones) to something free |
+| API restarts, logs show it cannot authenticate to Neo4j | `NEO4J_PASSWORD` was changed after the first start. Either put the original back or run `docker compose down -v` and start over |
+| Lookups fail with an auth error from the register | `CBE_API_KEY` is missing or wrong; confirm with `docker compose exec api env \| grep CBE` |
+| `additional property required is not allowed` on `docker compose up` | Compose is older than v2.24 — upgrade it, or delete the `required: false` line and always keep a `.env` present |
+| Neo4j exits during startup on a small host | Lower `NEO4J_HEAP_MAX` and `NEO4J_PAGECACHE` |
+
+### Tests
 
 The tests are plain scripts with no test-runner dependency — run them
 individually, or all at once:
 
 ```bash
 for t in api/tests/test_*.py; do python3 "$t"; done
+```
+
+They need no database, no API key and no network — only Python 3.12, plus
+`httpx` for `test_cbso_client.py`. If the host has no suitable Python, run them
+in a throwaway container against the same image the API uses:
+
+```bash
+docker compose run --rm --no-deps -v ./api/tests:/srv/tests api sh -c 'for t in /srv/tests/test_*.py; do python "$t"; done'
 ```
 
 `test_address.py` covers address and city canonicalisation, `test_xbrl.py` the
@@ -143,10 +264,17 @@ Two things about the source shape the code:
 
 ### Reading it on the canvas
 
-In the UI this is a **right-click on any company node** → *Investigate
-shareholders*, *Financials over time*, or *Expand neighbours*. A party with no
-CBE number cannot be looked up at the NBB, so the option is disabled with the
-reason rather than offered and failing.
+In the UI this is a **right-click on any company node**. The three actions
+differ in what they cost and what they change, which the menu states under each:
+
+| Action | Reaches the NBB? | Changes the graph? |
+|---|---|---|
+| *Investigate ownership* | yes — the latest filing | yes — adds owners, directors, participations |
+| *Financials over time* | yes — several years of figures | no — opens the side panel only |
+| *Expand neighbours* | no | draws what the graph already holds |
+
+A party with no CBE number cannot be looked up at the NBB, so the first two are
+disabled with the reason rather than offered and failing.
 
 Ownership edges carry direction arrows — for ownership, which way the edge
 points is the whole question — and are captioned with the percentage rather
@@ -186,6 +314,39 @@ handled in [`financials.py`](api/app/financials.py) and covered by tests:
 Consolidated filings are excluded from the series: they restate the whole group
 and would otherwise sit alongside the company's own figures as if they were one
 continuous history.
+
+### Citing the source
+
+Every figure in that panel is derived — extracted from a filing, converted,
+sometimes divided by another figure. So the panel links back to the documents it
+was derived from, and the table carries a **Source** column putting each year one
+click from the accounts it came from:
+
+| Where | What it links to |
+|---|---|
+| `Source` column, per row | that year's annual accounts as published (PDF) |
+| `Sources` block | every filing behind the charts, as **PDF**, **XBRL** and **CSV**, with its NBB reference number |
+| Footer link | the company's full filing list on the NBB Consult portal |
+| Shareholder panel | the filing the parties were read from |
+
+PDF is the document as published; CSV is the flattened rubriek codes this app
+actually parses. Both are offered because they answer different questions —
+"what does the filing say?" and "what did OpenABox read?".
+
+The reference number (`2025-00539072`) is shown next to each entry because it
+identifies a filing where a URL cannot: quoting a figure in writing, for
+instance.
+
+Links are built by `enterprise_url()` and `deposit_urls()` in
+[`cbso_client.py`](api/app/cbso_client.py), and returned as `source_urls` on
+`/api/company/{cbe}/financials` and `/api/company/{cbe}/shareholders`.
+
+**A filing is not always linkable.** The two NBB backends identify the same
+document differently: the Consult portal addresses it by GUID, the official web
+services by reference number, and only the GUID resolves on the public portal.
+Where the identifier is a reference number, the row shows "no public link" and
+falls back to the company's Consult page rather than emitting a URL that 404s.
+A dead citation link is worse than no link — it implies the source was checked.
 
 ### Coverage
 
@@ -243,7 +404,7 @@ disappears. Display names keep the filing's own order, so a person can appear
 as "Colruyt Willem" — that is the filing being wrong, not the graph.
 
 Filings contain private individuals' home addresses. That is a further reason
-to keep this instance unexposed, as the brief intends.
+to keep an instance unexposed — see [Who can reach it](#who-can-reach-it).
 
 ## Tables
 
@@ -366,11 +527,5 @@ The tag **must be annotated** (`git tag -a`). `--follow-tags` pushes annotated
 tags only, and it does so silently: a lightweight tag is skipped while the push
 still reports success, leaving the release untagged on the remote.
 
-Deploying a release on the Docker host:
-
-```bash
-cd openabox && git pull && docker compose restart api
-```
-
-Application code is bind-mounted, so a restart is enough; only dependency
-changes in `requirements.txt` need `docker compose up -d --build`.
+Deploying a release on whichever host runs the stack is the same two commands
+as any other update — see [Updating](#updating).
