@@ -934,10 +934,22 @@ function showResults(data, context) {
     const address = (r.address && r.address.full_address) ||
                     (props.address && props.address.full_address) || city;
     const extra = r.nace_code ? `${r.nace_code} — ${truncate(r.nace_description, 46)}` : '';
-    return `<div class="result" data-cbe="${cbe}">
-      <div class="name">${props.denomination || cbe}</div>
-      <div class="meta">${props.cbe_number_formatted || cbe}${address ? ' · ' + truncate(address, 40) : ''}</div>
-      ${extra ? `<div class="meta">${extra}</div>` : ''}
+
+    // A party named in a filing but absent from the Belgian register has no
+    // CBE number. Rendering that as the identifier printed "undefined", and
+    // the row then linked to /api/graph/company/undefined.
+    const foreign = !cbe;
+    const ident = foreign
+      ? [props.country_code, props.identifier].filter(Boolean).join(' ') ||
+        'not in the Belgian register'
+      : (props.cbe_number_formatted || cbe);
+
+    return `<div class="result${foreign ? ' external' : ''}"
+                 ${foreign ? `data-key="${esc(props.key || '')}"`
+                           : `data-cbe="${esc(cbe)}"`}>
+      <div class="name">${esc(props.denomination || ident)}</div>
+      <div class="meta">${esc(ident)}${address ? ' · ' + esc(truncate(address, 40)) : ''}</div>
+      ${extra ? `<div class="meta">${esc(extra)}</div>` : ''}
     </div>`;
   }).join('');
 
@@ -953,10 +965,23 @@ function showResults(data, context) {
     `<div class="source-tag">${data.source} · ${results.length} result(s)` +
     `${p && p.total ? ` of ${p.total}` : ''}${context ? ` · ${context}` : ''}</div>` +
     truncated + items + peopleSection(people);
-  box.querySelectorAll('.result:not(.person)').forEach((el) => {
+  box.querySelectorAll('.result:not(.person):not(.external)').forEach((el) => {
     el.addEventListener('click', () => loadCompany(el.dataset.cbe));
   });
+  box.querySelectorAll('.result.external').forEach((el) => {
+    el.addEventListener('click', () => loadExternal(el.dataset.key));
+  });
   wirePeople(box);
+}
+
+async function loadExternal(key) {
+  if (!key) return;
+  clearGraph();
+  try {
+    mergeGraph(await api(`/api/graph/external?key=${encodeURIComponent(key)}`));
+  } catch (err) {
+    console.warn('external entity graph failed', err);
+  }
 }
 
 async function loadCompany(cbe) {
@@ -975,11 +1000,17 @@ async function loadCompany(cbe) {
 
 const PLACEHOLDERS = {
   auto:    'Company or person name, NACE code, address, or 0716.663.615',
-  name:    'Company or person name, e.g. Colruyt',
+  name:    'Company name, e.g. Colruyt',
+  person:  'Shareholder or director name, e.g. Colruyt or Oskamp',
+  any:     'Company or person name',
   number:  'CBE / VAT number, e.g. 0716.663.615 or BE0716663615',
   nace:    'NACE code, e.g. 62 or 62010 (prefix matches sub-codes)',
   address: 'Edingensesteenweg 196, 1500 Halle',
 };
+
+/* Which of the three name scopes each mode maps to on the API. Auto and the
+ * plain name modes stay broad; only an explicit pick narrows. */
+const SEARCH_SCOPE = { name: 'companies', person: 'people', any: 'all' };
 
 const modeSelect = document.getElementById('mode');
 const naceVersion = document.getElementById('nace-version');
@@ -997,6 +1028,7 @@ modeSelect.addEventListener('change', () => {
   addressFields.hidden = !structured;
   naceVersion.hidden = mode !== 'nace';
   (structured ? document.getElementById('addr-street') : searchInput).focus();
+  updateSourceHint();
 });
 
 /* Say which source the next search will use. The checkbox is one word and the
@@ -1007,12 +1039,28 @@ const refreshBox = document.getElementById('refresh');
 const sourceHint = document.getElementById('source-hint');
 
 function updateSourceHint() {
-  sourceHint.innerHTML = refreshBox.checked
-    ? '<b>live</b> — asks the CBE register again and stores the answer. ' +
-      'Spends one API call per page of results.'
-    : '<b>cached</b> — answers from your own graph, free and instant. ' +
-      'Tick <em>live</em> to re-query the register.';
-  sourceHint.classList.toggle('is-live', refreshBox.checked);
+  // People are only ever in the graph: they come out of filings this instance
+  // has already ingested, and the register holds nothing about them. Saying
+  // "tick live to re-query" under a person search would be an offer that
+  // cannot be honoured.
+  const peopleOnly = modeSelect.value === 'person';
+  const live = refreshBox.checked && !peopleOnly;
+
+  sourceHint.innerHTML = peopleOnly
+    ? '<b>people</b> — shareholders and directors from filings already ' +
+      'ingested. Always answered from your graph; <em>live</em> does not ' +
+      'apply, as the register holds no people.'
+    : live
+      ? '<b>live</b> — asks the CBE register again and stores the answer. ' +
+        'Spends one API call per page of results.'
+      : '<b>cached</b> — answers from your own graph, free and instant. ' +
+        'Tick <em>live</em> to re-query the register.';
+
+  sourceHint.classList.toggle('is-live', live);
+  // Disabled rather than hidden: a control that vanishes is more confusing
+  // than one that is visibly not applicable here.
+  refreshBox.disabled = peopleOnly;
+  refreshBox.closest('.refresh').classList.toggle('is-disabled', peopleOnly);
 }
 
 refreshBox.addEventListener('change', updateSourceHint);
@@ -1097,7 +1145,12 @@ document.getElementById('search-form').addEventListener('submit', async (evt) =>
       showResults(await api(`/api/address/search?${qs}`),
                   Object.entries(parts).map(([k, v]) => `${k}=${v}`).join(' · '));
     } else {
-      showResults(await api(`/api/search?name=${encodeURIComponent(term)}&refresh=${live}`));
+      // 'name', 'person' and 'any' all land here; only the scope differs.
+      // Auto keeps the broad scope, since it cannot know which was meant.
+      const scope = SEARCH_SCOPE[mode] || 'all';
+      showResults(await api(
+        `/api/search?name=${encodeURIComponent(term)}` +
+        `&refresh=${live && scope !== 'people'}&scope=${scope}`));
     }
   } catch (err) {
     box.innerHTML = `<p class="empty">${err.message}</p>`;

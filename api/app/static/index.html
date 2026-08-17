@@ -29,10 +29,20 @@
       <div class="bar">
         <select id="mode" title="What to search by">
           <option value="auto">Auto</option>
-          <option value="name">Name</option>
-          <option value="number">CBE nr</option>
-          <option value="nace">NACE</option>
-          <option value="address">Address</option>
+          <optgroup label="By name">
+            <option value="name">Company</option>
+            <!-- People exist only in ingested filings, so this scope never
+                 reaches the register — see the hint under the bar. -->
+            <option value="person">Person</option>
+            <option value="any">Company or person</option>
+          </optgroup>
+          <optgroup label="By identifier">
+            <option value="number">CBE / VAT nr</option>
+            <option value="nace">NACE code</option>
+          </optgroup>
+          <optgroup label="By location">
+            <option value="address">Address</option>
+          </optgroup>
         </select>
         <input id="search-input" type="search" placeholder="Company name, NACE code, address, or 0716.663.615" autocomplete="off" required>
         <select id="nace-version" title="NACE version" hidden>

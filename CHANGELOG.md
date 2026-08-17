@@ -3,6 +3,35 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.9.0] — 2026-08-16
+
+### Added
+- **The search scope dropdown lists what can actually be searched.** It still
+  offered Auto, Name, CBE nr, NACE and Address — unchanged since before people
+  became searchable, so the one genuinely new capability had no entry. The
+  scopes are now grouped and complete: *Company*, *Person* and *Company or
+  person* under **By name**, *CBE / VAT nr* and *NACE code* under **By
+  identifier**, *Address* under **By location**. Each carries its own
+  placeholder.
+- `GET /api/search` takes `scope=all|companies|people`. `scope=people` never
+  calls the register — there is nothing there to ask for — so it is cheap and
+  cannot fail on a missing API key.
+- The *live* checkbox is **disabled** under the Person scope, with the hint
+  saying why: people come only from ingested filings, so a re-query is an offer
+  that cannot be honoured. Disabled rather than hidden, since a control that
+  vanishes is more confusing than one visibly not applicable.
+- `GET /api/graph/external?key=` returns a foreign party's neighbourhood, and a
+  **Searching** section in the README documents every scope and the two
+  ambiguities Auto has to resolve.
+
+### Fixed
+- **Foreign parties in search results rendered as `undefined` and led nowhere.**
+  A company named in a filing but absent from the Belgian register has no CBE
+  number; the results list printed that missing number as the identifier, and
+  the row linked to `/api/graph/company/undefined`. They now show their country
+  and national identifier (`LU LU22559064`), are marked with their own colour,
+  and open through the new external-entity endpoint.
+
 ## [0.8.1] — 2026-08-16
 
 ### Fixed

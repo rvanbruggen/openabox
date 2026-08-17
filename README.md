@@ -11,7 +11,7 @@ the host you put it on. See [Installation](#installation) to get it running.
 
 ## Version
 
-**0.8.1** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.9.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -21,13 +21,13 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.8.1` |
+| Git | annotated tag `v0.9.0` |
 
 The licence follows the same route — `__license__` in the same file, reported
 by `/health`, rendered in `/docs` and in the UI footer.
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.8.1`, that is the code answering.
+actually running — if the header says `v0.9.0`, that is the code answering.
 
 ## Status
 
@@ -312,6 +312,35 @@ TTLs: `OPENABOX_CACHE_TTL_DAYS` (default 90) for register records, which change
 slowly; `OPENABOX_CBSO_TTL_DAYS` (default 180) for ownership and financials,
 which change once a year when accounts are filed. `?refresh=true` overrides
 either.
+
+### Searching
+
+The dropdown beside the search box picks what the term is matched against.
+**Auto** infers it from the shape of what you typed and is usually right; the
+explicit scopes exist for the cases where it cannot be:
+
+| Scope | Matches | Source |
+|---|---|---|
+| **Auto** | Infers from the input — digits to a CBE or NACE code, mixed text and digits to an address, otherwise a name | either |
+| **Company** | Company names, commercial names and abbreviations | graph, or the register with *live* |
+| **Person** | Shareholders and directors from filings | graph only |
+| **Company or person** | Both of the above at once | graph, or the register with *live* |
+| **CBE / VAT nr** | One company by number | graph, or the register |
+| **NACE code** | Companies carrying an activity code, matched by prefix | graph, or the register |
+| **Address** | Companies at a street, number, post code or city | graph, or the register |
+
+Two ambiguities Auto has to resolve, and how:
+
+- A short run of digits is both a NACE code and a post code. Auto reads it as
+  NACE; pick **Address** explicitly for a post code.
+- A name could be a company or a person. Auto searches both and lists them
+  separately rather than guessing.
+
+**Person is the one scope that never reaches the register.** People come out of
+NBB filings this instance has already ingested; the CBE holds nothing about
+them. So the *live* checkbox is disabled under that scope rather than offering
+a re-query that cannot happen — a name that has never appeared in an ingested
+filing will not be found no matter what is ticked.
 
 ### Reading it back
 

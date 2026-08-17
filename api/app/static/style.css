@@ -160,9 +160,13 @@ button.secondary { background: transparent; color: var(--text); border-color: va
 .source-hint { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
 .source-hint b { font-weight: 600; }
 .source-hint.is-live { color: var(--accent); }
+.refresh.is-disabled { opacity: .45; cursor: not-allowed; }
 
 /* People sit in the same result list as companies but lead somewhere else —
    a person has no CBE number and no register record, only holdings. */
+/* Foreign and unidentified parties: in the graph, but not in the register. */
+.result.external { border-left: 3px solid #7d5f9e; }
+
 .result.person { border-left: 3px solid #b5527a; }
 .result.person .name::before {
   content: '';

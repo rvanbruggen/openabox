@@ -118,6 +118,11 @@ async def health():
 async def search(
     name: str = Query(..., min_length=2),
     refresh: bool = Query(False, description="Bypass cache and re-query the API"),
+    scope: str = Query(
+        "all",
+        pattern="^(all|companies|people)$",
+        description="Narrow the search to one kind of result",
+    ),
 ):
     """Search by company or person name.
 
@@ -129,9 +134,13 @@ async def search(
     shareholders and directors read out of NBB filings, and no upstream
     endpoint serves them — so "re-query the register" is not a thing that can
     be done for a person, and skipping them when `refresh` is set would make
-    them silently vanish from results.
+    them silently vanish from results. For the same reason `scope=people`
+    never calls the register at all: there would be nothing to ask it for.
     """
-    people = await _search_people(name)
+    people = await _search_people(name) if scope in ("all", "people") else []
+
+    if scope == "people":
+        return {"source": "cache", "count": 0, "results": [], "people": people}
 
     if not refresh:
         cached = await graph.run_read(
@@ -836,6 +845,29 @@ def _as_series_row(metrics: dict, deposit: dict) -> dict:
         "source_urls": cbso_client.deposit_urls(deposit.get("id")),
     }
     return financials.derive(row)
+
+
+@app.get("/api/graph/external")
+async def external_graph(key: str = Query(..., description="ExternalEntity.key")):
+    """A foreign or unidentified party and what it holds.
+
+    These have no CBE number — they are named in a filing but are not in the
+    Belgian register — so they cannot be reached through the company endpoints.
+    Without this they would appear in results and then go nowhere.
+    """
+    rows = await graph.run_read(
+        """
+        MATCH (e:ExternalEntity {key: $key})
+        OPTIONAL MATCH p1 = (e)-[:SHAREHOLDER_OF]->(:Company)
+        OPTIONAL MATCH p2 = (e)-[:DIRECTOR_OF]->(:Company)
+        OPTIONAL MATCH p3 = (e)-[:REGISTERED_AT]->(:Address)
+        RETURN e, p1, p2, p3
+        """,
+        key=key,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Entity not in the graph")
+    return graph.collect_graph(rows)
 
 
 @app.get("/api/graph/person")
