@@ -7,7 +7,7 @@ for records already held.
 
 ## Version
 
-**0.5.1** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.6.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -17,13 +17,13 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.5.1` |
+| Git | annotated tag `v0.6.0` |
 
 The licence follows the same route — `__license__` in the same file, reported
 by `/health`, rendered in `/docs` and in the UI footer.
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.5.1`, that is the code answering.
+actually running — if the header says `v0.6.0`, that is the code answering.
 
 ## Status
 
@@ -38,6 +38,7 @@ actually running — if the header says `v0.5.1`, that is the code answering.
 | Shareholder / director ingestion (NBB annual accounts) | Verified end-to-end on 4 live filings |
 | Right-click investigation + ownership rendering | Verified in a browser |
 | Financial history panel | Verified on full, abbreviated and micro filings |
+| Table browser (11 tables, filters, CSV) | Routes and query building verified; Cypher not yet run against live data |
 | Staatsblad ingestion (changes between filings) | Not started |
 
 Verified on a live ingestion of 10 companies: 336 establishments resolved to
@@ -69,8 +70,9 @@ for t in api/tests/test_*.py; do python3 "$t"; done
 ```
 
 `test_address.py` covers address and city canonicalisation, `test_xbrl.py` the
-shareholder/director extraction and identity keys, and `test_financials.py` the
-rubriek-code metrics.
+shareholder/director extraction and identity keys, `test_financials.py` the
+rubriek-code metrics, and `test_browse.py` the table query building — including
+that an unknown column or sort key is rejected rather than interpolated.
 
 ## Graph model
 
@@ -242,6 +244,58 @@ as "Colruyt Willem" — that is the filing being wrong, not the graph.
 
 Filings contain private individuals' home addresses. That is a further reason
 to keep this instance unexposed, as the brief intends.
+
+## Tables
+
+The canvas answers *how is this connected?*. The **Graph / Table** switch in the
+header answers the other half — *what is in here at all?* — as sortable,
+filterable tables of every label in the graph, plus two that are relationships
+and so have no home on a canvas showing one company at a time:
+
+| Table | Row |
+|---|---|
+| Shareholdings | owner → company, stake %, shares, as of |
+| Directorships | officer → company, role, represented by, as of |
+
+Clicking a row loads that record onto the graph, so the two views feed each
+other rather than competing. **Open in console** hands over the exact Cypher the
+table just ran, and **Export CSV** downloads precisely the rows on screen —
+same filters, same sort.
+
+**Every table lists the local cache, not the register.** The CBE holds around
+two million companies; this graph holds the ones that have been looked up plus
+the stubs other companies' filings named. Each table therefore carries a scope
+line saying so, and Companies exposes `_hydrated` as a **Full record** column: a
+stub has to be visibly a stub, or four hundred rows read as a claim about
+Belgium.
+
+Two things the tables get right that a naive version would not:
+
+- **Counts crossing a filing-derived edge count distinct parties, not edges.**
+  Ownership edges are merged on `as_of`, so a company that has filed five years
+  running carries five `SHAREHOLDER_OF` edges from the same owner. That
+  accumulation is the point of the model, and it means a plain edge count
+  reports one owner as five.
+- **Column keys are resolved server-side, never interpolated.** Cypher cannot
+  parameterise a label or a property name, so [`browse.py`](api/app/browse.py)
+  builds its query as a string — and a read transaction does *not* close that
+  hole, since a read query can still walk the whole store. The client sends
+  keys; the server looks up the expression it wrote itself and rejects anything
+  unknown with a 400. Only filter *values* travel as parameters.
+
+Numeric filters accept comparisons (`>25`, `<=100`). A bare number reads as *at
+least*, because the question behind typing 1 into an Owners column is "which
+have any?", not "which have precisely one?".
+
+```
+GET /api/browse                     # the registry: tables, columns, defaults
+GET /api/browse/companies?q=colruyt&sort=shareholders&dir=desc&f.status=AC
+GET /api/browse/shareholdings/export.csv?f.pct=>=25
+```
+
+The UI builds its tabs, headers and sort defaults from the registry rather than
+hardcoding them — the same rule as the version and the licence, so a column
+added in `browse.py` appears in the browser without a second edit.
 
 ## Notes from probing the live API
 

@@ -437,7 +437,9 @@ async def shareholders(
     }
     return {
         "source": "nbb-cbso",
-        "deposit": deposit,
+        # Carry the public links alongside the filing so the panel can cite the
+        # document these parties were read from, not just name it.
+        "deposit": dict(deposit, source_urls=cbso_client.deposit_urls(deposit["id"])),
         "shareholders": by_role["SHAREHOLDER"],
         "directors": by_role["DIRECTOR"],
         "participations": by_role["PARTICIPATION"],
@@ -763,6 +765,10 @@ def _as_series_row(metrics: dict, deposit: dict) -> dict:
         "year": (deposit.get("period_end") or "")[:4],
         "model_id": deposit.get("model_id"),
         "deposit_id": deposit.get("id"),
+        # The NBB's own citation identifier for the filing, worth showing
+        # alongside the links so a figure can be quoted without a URL.
+        "reference": deposit.get("reference"),
+        "source_urls": cbso_client.deposit_urls(deposit.get("id")),
     }
     return financials.derive(row)
 

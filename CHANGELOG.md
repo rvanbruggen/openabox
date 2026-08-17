@@ -3,6 +3,53 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.6.0] — 2026-08-16
+
+### Added
+- **Table browser.** A *Graph / Table* switch in the header swaps the canvas for
+  a sortable, filterable table of anything in the graph: companies, people,
+  addresses, cities, establishments, NACE codes, legal forms, legal situations
+  and filings — plus **shareholdings** and **directorships**, which are edges
+  and so had no home on a canvas that shows one company at a time. Clicking a
+  row loads that record onto the graph, so the two views feed each other.
+- `GET /api/browse` returns the table registry; `GET /api/browse/{table}`
+  returns one page with its total, and `GET /api/browse/{table}/export.csv`
+  returns the whole filtered set. The UI builds its tabs, headers and sort
+  defaults from the registry rather than hardcoding them, on the same rule as
+  the version and licence.
+- **Per-column filters** on top of a free-text search across the table. Numeric
+  columns accept comparisons (`>25`, `<=100`); a bare number reads as *at
+  least*, because the question behind typing 1 into an Owners column is "which
+  have any?".
+- **CSV export** of exactly the rows on screen — same filters, same sort. Capped
+  at 10 000 rows, and the button says which of the two it is offering rather
+  than handing over a truncated file that looks complete.
+- **Open in console** hands the Cypher the table just ran to the existing
+  console, so the table is a way into the query language rather than a
+  replacement for it.
+- [`api/tests/test_browse.py`](api/tests/test_browse.py) — 22 tests covering
+  registry integrity, the rejection of unknown tables, columns and sort keys,
+  filter-operator parsing and CSV flattening.
+
+### Notes
+- **Every table lists the local cache, not the register.** Each carries a scope
+  line saying so, and the companies table exposes `_hydrated` as a column: a
+  company known only because someone else's filing named it has to be visibly a
+  stub, or 400 rows read as a claim about Belgium.
+- Counts that cross a filing-derived edge count **distinct parties, not edges**.
+  Ownership edges are merged on `as_of`, so a company that has filed five years
+  running carries five `SHAREHOLDER_OF` edges from one owner — a plain edge
+  count would report that owner as five.
+- Cypher cannot parameterise a label or a property name, so the browse endpoint
+  builds its query as a string. Read-only transactions do not close that hole.
+  Every entity, column and sort key is therefore resolved against a server-side
+  registry and rejected if unknown; only filter *values* travel as parameters.
+- **Also in this tag, not yet wired up:** `enterprise_url()` and
+  `deposit_urls()` in [`cbso_client.py`](api/app/cbso_client.py), which build
+  public NBB Consult links for a filing, with tests. Nothing calls them yet, so
+  they change no behaviour — recorded here rather than shipped silently, which
+  is what 0.4.0 did.
+
 ## [0.5.1] — 2026-08-16
 
 ### Added

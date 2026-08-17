@@ -658,7 +658,8 @@ async function showFinancials(node, cbe) {
     </div>
 
     <table class="fin-table">
-      <thead><tr><th>Year</th><th>Equity</th><th>Assets</th><th>Result</th><th>FTE</th></tr></thead>
+      <thead><tr><th>Year</th><th>Equity</th><th>Assets</th><th>Result</th><th>FTE</th>
+        <th title="The filing these figures were read from">Source</th></tr></thead>
       <tbody>${rows.slice().reverse().map((r) => `
         <tr>
           <td>${esc(r.year)}</td>
@@ -666,11 +667,48 @@ async function showFinancials(node, cbe) {
           <td>${money(r.total_assets)}</td>
           <td class="${r.result < 0 ? 'neg' : ''}">${money(r.result)}</td>
           <td>${typeof r.employees_fte === 'number' ? r.employees_fte.toFixed(0) : '—'}</td>
+          <td>${sourceCell(r)}</td>
         </tr>`).join('')}</tbody>
     </table>
-    <p class="menu-note">Source: annual accounts filed with the NBB
-      (${esc(rows.map((r) => r.model_id).filter((v, i, a) => a.indexOf(v) === i).join(', '))}).
-      Figures are as filed and not restated.</p>`;
+
+    ${sourceList(rows, data.cbe_number)}`;
+}
+
+/* Per-year link straight to the filed document at the NBB. The PDF is the one
+ * a human wants: it is the document as published, so a figure in the table can
+ * be checked against the original without trusting the extraction. */
+function sourceCell(r) {
+  if (!r.source_urls) return '<span title="Not addressable on the public portal">—</span>';
+  return `<a href="${esc(r.source_urls.pdf)}" target="_blank" rel="noopener"
+             title="Annual accounts as filed${r.reference ? ` · ref ${esc(r.reference)}` : ''}">PDF</a>`;
+}
+
+/* The full citation block: every filing behind the charts, in all three
+ * formats the NBB publishes, plus the company's own page on the portal. The
+ * reference number is shown because it identifies the filing when a URL is not
+ * usable — quoting a figure in writing, for instance. */
+function sourceList(rows, cbe) {
+  const enterprise = `https://consult.cbso.nbb.be/consult-enterprise/${encodeURIComponent(cbe)}`;
+  const items = rows.slice().reverse().map((r) => {
+    const label = `${esc(r.year)} <span class="ref">${esc(r.model_id || '')}` +
+      `${r.reference ? ` · ${esc(r.reference)}` : ''}</span>`;
+    if (!r.source_urls) return `<li>${label} <span class="muted">no public link</span></li>`;
+    const links = [['pdf', 'PDF'], ['xbrl', 'XBRL'], ['csv', 'CSV']]
+      .map(([k, t]) => `<a href="${esc(r.source_urls[k])}" target="_blank" rel="noopener">${t}</a>`)
+      .join(' ');
+    return `<li>${label} ${links}</li>`;
+  }).join('');
+
+  return `<div class="fin-sources">
+    <h4>Sources</h4>
+    <p class="sub">Every figure above is read from these filings. PDF is the
+      document as published; CSV is the flattened rubriek codes this app parses.</p>
+    <ul>${items}</ul>
+    <p class="sub"><a href="${esc(enterprise)}" target="_blank" rel="noopener">
+      All filings for this company at the NBB ›</a></p>
+    <p class="menu-note">Figures are as filed and not restated. Links go to the
+      National Bank's public Consult portal.</p>
+  </div>`;
 }
 
 function partyRows(parties, emptyText) {
@@ -708,6 +746,9 @@ function showInvestigation(node, data) {
   details.innerHTML = `
     <div class="source-tag">${data.source} · ${d.model_id} · year end ${filed}</div>
     <div class="detail-title">${caption(node)}</div>
+    ${d.source_urls ? `<p class="menu-note">Read from
+      <a href="${esc(d.source_urls.pdf)}" target="_blank" rel="noopener">the filed
+      accounts</a>${d.reference ? ` (ref ${esc(d.reference)})` : ''}.</p>` : ''}
     <h3 class="occupants-heading">Shareholders
       <span class="count">${(data.shareholders || []).length}</span></h3>
     ${partyRows(data.shareholders, 'The filing names no shareholders.')}
@@ -1047,6 +1088,314 @@ async function runCypher() {
        `<tr>${columns.map((c) => `<td>${cell(r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table>` +
     (records.length > 200 ? `<p class="empty">Showing first 200 of ${records.length}.</p>` : '');
 }
+
+/* ---------- table browser ----------
+ *
+ * The canvas answers "how is this connected?"; the table answers "what is in
+ * here at all?". Both are views of the same cache, so a row click loads that
+ * record onto the graph rather than opening a parallel detail world.
+ *
+ * Columns, sort defaults and scope lines all come from /api/browse — the
+ * server owns the registry, and the only thing sent back to it is a column
+ * *key*, never an expression. Nothing here can widen what a query may touch.
+ */
+
+const tableWrap = document.getElementById('table-wrap');
+const tableBody = document.getElementById('table-body');
+
+const browseState = {
+  tables: [],        // registry from the server
+  key: null,         // which table is open
+  columns: [],
+  sort: null,
+  dir: 'asc',
+  skip: 0,
+  limit: 50,
+  q: '',
+  filters: {},       // column key -> raw filter text
+  total: 0,
+  query: '',         // the Cypher the server ran, for the console button
+  rendered: null,    // which table the current <thead> belongs to
+};
+
+function showView(view) {
+  const table = view === 'table';
+  document.getElementById('canvas-wrap').hidden = table;
+  tableWrap.hidden = !table;
+  for (const [id, on] of [['view-graph', !table], ['view-table', table]]) {
+    const btn = document.getElementById(id);
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  if (table && !browseState.tables.length) loadTableRegistry();
+}
+
+document.getElementById('view-graph').addEventListener('click', () => showView('graph'));
+document.getElementById('view-table').addEventListener('click', () => showView('table'));
+
+async function loadTableRegistry() {
+  let data;
+  try {
+    data = await api('/api/browse');
+  } catch (err) {
+    tableBody.innerHTML = `<p class="empty">${esc(err.message)}</p>`;
+    return;
+  }
+  browseState.tables = data.tables || [];
+  const select = document.getElementById('table-entity');
+  select.replaceChildren();
+  for (const t of browseState.tables) {
+    const opt = document.createElement('option');
+    opt.value = t.key;
+    opt.textContent = t.label;
+    select.append(opt);
+  }
+  openTable(browseState.tables[0]?.key);
+}
+
+function openTable(key) {
+  const def = browseState.tables.find((t) => t.key === key);
+  if (!def) return;
+  Object.assign(browseState, {
+    key,
+    columns: def.columns,
+    sort: def.default_sort,
+    dir: def.default_dir,
+    skip: 0,
+    q: '',
+    filters: {},
+    rendered: null,
+  });
+  document.getElementById('table-entity').value = key;
+  document.getElementById('table-search').value = '';
+  fetchTable();
+}
+
+document.getElementById('table-entity')
+  .addEventListener('change', (evt) => openTable(evt.target.value));
+
+/* The query string every table request and the CSV export share, so the file
+ * downloaded is exactly the rows on screen — filters, search, sort and all. */
+function tableParams({ paged = true } = {}) {
+  const qs = new URLSearchParams();
+  if (browseState.q) qs.set('q', browseState.q);
+  if (browseState.sort) qs.set('sort', browseState.sort);
+  if (browseState.dir) qs.set('dir', browseState.dir);
+  for (const [key, value] of Object.entries(browseState.filters)) {
+    if (value) qs.set(`f.${key}`, value);
+  }
+  if (paged) {
+    qs.set('skip', browseState.skip);
+    qs.set('limit', browseState.limit);
+  }
+  return qs;
+}
+
+async function fetchTable() {
+  if (!browseState.key) return;
+  document.getElementById('table-status').textContent = 'loading…';
+  let data;
+  try {
+    data = await api(`/api/browse/${browseState.key}?${tableParams()}`);
+  } catch (err) {
+    tableBody.innerHTML = `<p class="empty">${esc(err.message)}</p>`;
+    document.getElementById('table-status').textContent = '';
+    return;
+  }
+  browseState.total = data.total;
+  browseState.query = data.query;
+  renderScope(data);
+  if (browseState.rendered !== data.table) renderTableHead(data);
+  updateSortMarks(data);
+  renderTableRows(data);
+  renderPager(data);
+}
+
+/* The head survives a refetch, so the sort arrow is moved rather than redrawn
+ * with it. */
+function updateSortMarks(data) {
+  tableBody.querySelectorAll('th[data-col]').forEach((th) => {
+    const active = th.dataset.col === data.sort;
+    th.classList.toggle('sorted', active);
+    th.querySelector('.sort-mark').textContent =
+      active ? (data.dir === 'desc' ? ' ▾' : ' ▴') : '';
+  });
+}
+
+/* A count of rows in a *cache* is not a count of rows in the register, and the
+ * difference is the whole reason this line exists. */
+function renderScope(data) {
+  document.getElementById('table-scope').innerHTML =
+    `<span class="source-tag">local graph · ${data.total.toLocaleString()} row(s)</span>` +
+    (data.scope ? `<span class="scope-text">${esc(data.scope)}</span>` : '') +
+    (data.note ? `<p class="scope-note">${esc(data.note)}</p>` : '');
+}
+
+/* The head is built once per table rather than on every fetch, so typing in a
+ * column filter does not tear out the input the user is typing into. */
+function renderTableHead(data) {
+  const headers = data.columns.map((c) => `
+    <th class="${c.type === 'number' ? 'num' : ''}${c.sortable ? ' sortable' : ''}"
+        data-col="${c.key}" ${c.hint ? `title="${esc(c.hint)}"` : ''}>
+      <span class="th-label">${esc(c.label)}<i class="sort-mark"></i></span>
+    </th>`).join('');
+
+  const filters = data.columns.map((c) => `
+    <th class="filter-cell">
+      <input data-filter="${c.key}" type="search" autocomplete="off"
+             placeholder="${c.type === 'number' ? '≥ 0, >5, <100' : ''}"
+             value="${esc(browseState.filters[c.key] || '')}">
+    </th>`).join('');
+
+  tableBody.innerHTML =
+    `<table class="browse">
+       <thead>
+         <tr class="head-row">${headers}</tr>
+         <tr class="filter-row">${filters}</tr>
+       </thead>
+       <tbody></tbody>
+     </table>`;
+  browseState.rendered = data.table;
+
+  tableBody.querySelectorAll('th.sortable').forEach((th) => {
+    th.addEventListener('click', () => sortBy(th.dataset.col));
+  });
+
+  let debounce;
+  tableBody.querySelectorAll('input[data-filter]').forEach((input) => {
+    input.addEventListener('input', () => {
+      browseState.filters[input.dataset.filter] = input.value.trim();
+      browseState.skip = 0;
+      clearTimeout(debounce);
+      debounce = setTimeout(fetchTable, 300);
+    });
+  });
+}
+
+function sortBy(key) {
+  const col = browseState.columns.find((c) => c.key === key);
+  if (!col || !col.sortable) return;
+  if (browseState.sort === key) {
+    browseState.dir = browseState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    browseState.sort = key;
+    // A count column is nearly always asked "which are the biggest?" first.
+    browseState.dir = col.type === 'number' ? 'desc' : 'asc';
+  }
+  browseState.skip = 0;
+  fetchTable();
+}
+
+function formatCell(value, type) {
+  if (value === null || value === undefined || value === '') return '<span class="nil">—</span>';
+  if (type === 'bool') return value ? 'yes' : '<span class="nil">no</span>';
+  if (type === 'number') {
+    return typeof value === 'number'
+      ? `<span class="num">${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>`
+      : esc(value);
+  }
+  if (type === 'list') {
+    return Array.isArray(value) ? esc(value.join('; ')) : esc(value);
+  }
+  if (type === 'date') return esc(String(value).slice(0, 10));
+  return esc(truncate(value, 60));
+}
+
+function renderTableRows(data) {
+  const tbody = tableBody.querySelector('tbody');
+  if (!tbody) return;
+  if (!data.rows.length) {
+    tbody.innerHTML =
+      `<tr><td colspan="${data.columns.length}" class="empty-cell">Nothing matches.` +
+      `${Object.values(browseState.filters).some(Boolean) || browseState.q
+        ? ' Clear a filter, or search live to bring more into the cache.'
+        : ' Search for a company to start filling the graph.'}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data.rows.map((row) => `
+    <tr data-id="${esc(row._id)}" ${row._cbe ? `data-cbe="${esc(row._cbe)}"` : ''}>
+      ${data.columns.map((c) =>
+        `<td class="${c.type === 'number' ? 'num' : ''}">${formatCell(row[c.key], c.type)}</td>`
+      ).join('')}
+    </tr>`).join('');
+
+  tbody.querySelectorAll('tr[data-id]').forEach((tr) => {
+    tr.addEventListener('click', () => openRow(tr.dataset.cbe, tr.dataset.id));
+  });
+}
+
+/* Clicking a row puts it on the canvas. A row with a CBE number loads the full
+ * company; anything else — an address, a city, a filing — is expanded from its
+ * own node, which is all the graph can say about it. */
+async function openRow(cbe, elementId) {
+  showView('graph');
+  if (cbe) return loadCompany(cbe);
+  clearGraph();
+  try {
+    mergeGraph(await api('/api/graph/expand', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ element_id: elementId, limit: 80 }),
+    }));
+  } catch (err) {
+    console.warn('row expand failed', err);
+  }
+}
+
+function renderPager(data) {
+  const from = data.total ? data.skip + 1 : 0;
+  const to = Math.min(data.skip + data.limit, data.total);
+  document.getElementById('table-status').textContent =
+    `${from.toLocaleString()}–${to.toLocaleString()} of ${data.total.toLocaleString()}`;
+  document.getElementById('page-prev').disabled = data.skip === 0;
+  document.getElementById('page-next').disabled = to >= data.total;
+
+  // Say which of the two the CSV is, rather than handing over a truncated file
+  // that looks complete.
+  const EXPORT_CAP = 10000;
+  const btn = document.getElementById('table-export');
+  btn.textContent = data.total > EXPORT_CAP
+    ? `Export first ${EXPORT_CAP.toLocaleString()} of ${data.total.toLocaleString()}`
+    : `Export ${data.total.toLocaleString()} row(s)`;
+  btn.disabled = data.total === 0;
+}
+
+document.getElementById('page-prev').addEventListener('click', () => {
+  browseState.skip = Math.max(0, browseState.skip - browseState.limit);
+  fetchTable();
+});
+document.getElementById('page-next').addEventListener('click', () => {
+  browseState.skip += browseState.limit;
+  fetchTable();
+});
+document.getElementById('table-limit').addEventListener('change', (evt) => {
+  browseState.limit = Number(evt.target.value);
+  browseState.skip = 0;
+  fetchTable();
+});
+
+let searchDebounce;
+document.getElementById('table-search').addEventListener('input', (evt) => {
+  browseState.q = evt.target.value.trim();
+  browseState.skip = 0;
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(fetchTable, 300);
+});
+
+document.getElementById('table-export').addEventListener('click', () => {
+  window.location = `/api/browse/${browseState.key}/export.csv?${tableParams({ paged: false })}`;
+});
+
+/* The table is a shortcut into the query language, not a replacement for it:
+ * this hands over the exact Cypher the server just ran, ready to edit. */
+document.getElementById('table-console').addEventListener('click', () => {
+  if (!browseState.query) return;
+  document.getElementById('cypher').value = browseState.query;
+  consoleBody.hidden = false;
+  document.getElementById('console-toggle').setAttribute('aria-expanded', 'true');
+  document.getElementById('cypher').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 
 /* ---------- quota ---------- */
 

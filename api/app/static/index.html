@@ -106,6 +106,32 @@
       <div id="node-menu" class="menu" hidden></div>
     </section>
 
+    <section id="table-wrap" hidden>
+      <div id="table-toolbar">
+        <select id="table-entity" title="What to list"></select>
+        <input id="table-search" type="search" placeholder="Filter all columns…"
+               autocomplete="off">
+        <span class="spacer"></span>
+        <button type="button" id="table-console" class="secondary"
+                title="Put the query behind this table into the Cypher console">
+          Open in console</button>
+        <button type="button" id="table-export" class="secondary">Export CSV</button>
+      </div>
+      <div id="table-scope"></div>
+      <div id="table-body"><p class="empty">Loading…</p></div>
+      <div id="table-pager">
+        <button type="button" id="page-prev" class="secondary">‹ Previous</button>
+        <span id="table-status"></span>
+        <button type="button" id="page-next" class="secondary">Next ›</button>
+        <select id="table-limit" title="Rows per page">
+          <option>25</option>
+          <option selected>50</option>
+          <option>100</option>
+          <option>250</option>
+        </select>
+      </div>
+    </section>
+
     <aside id="financials" hidden>
       <div class="fin-head">
         <span id="fin-title">Financials</span>

@@ -277,7 +277,12 @@ dl.props dd { margin: 0; word-break: break-word; }
 }
 .menu button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
 .menu button:disabled { color: var(--muted); cursor: default; }
-.menu .menu-note { padding: 4px 10px 6px; font-size: 11px; color: var(--muted); }
+/* Small print. Used both inside the right-click menu and standalone in the
+   panels, so the type rules are unscoped and only the menu's padding is
+   scoped — a `.menu`-only selector left every standalone note rendering at
+   full body size. */
+.menu-note { font-size: 11px; line-height: 1.45; color: var(--muted); margin: 8px 0 0; }
+.menu .menu-note { padding: 4px 10px 6px; margin: 0; }
 
 /* Ownership edges get their own visual language. On a canvas that already
    shows addresses and NACE codes, who-owns-whom has to be readable at a
@@ -353,6 +358,31 @@ dl.props dd { margin: 0; word-break: break-word; }
 .fin-table th:first-child, .fin-table td:first-child { text-align: left; }
 .fin-table th { color: var(--muted); font-weight: 600; }
 .fin-table td.neg { color: var(--danger); }
+.fin-table td a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.fin-table td a:hover { text-decoration: underline; }
+
+/* Citation block. Every figure in the panel is derived, so the filings it was
+   derived from are listed rather than merely credited. */
+.fin-sources { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
+.fin-sources h4 {
+  margin: 0 0 2px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted);
+}
+.fin-sources .sub { font-size: 11px; color: var(--muted); margin: 0 0 8px; }
+.fin-sources ul { list-style: none; margin: 0 0 10px; padding: 0; }
+.fin-sources li {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.fin-sources li .ref { font: 10px var(--mono); color: var(--muted); margin-right: auto; }
+.fin-sources li .muted { color: var(--muted); font-size: 11px; }
+.fin-sources a {
+  color: var(--accent); text-decoration: none;
+  font: 10px var(--mono); padding: 1px 6px;
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.fin-sources a:hover { background: var(--accent-soft); border-color: var(--accent); }
+.fin-sources .sub a { border: 0; padding: 0; font-size: 11px; font-family: inherit; }
 
 @media (max-width: 1100px) { #financials { display: none; } }
 
@@ -406,3 +436,86 @@ th, td {
 }
 th { background: var(--bg); font-weight: 600; }
 td { font-family: var(--mono); font-size: 11.5px; }
+
+/* ---------- view switch ---------- */
+
+/* Segmented, not two loose buttons: the pair is one setting with two states,
+ * and only one of them can be true. */
+.view-switch { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.view-switch button {
+  background: transparent; color: var(--muted);
+  border: 0; border-radius: 0; padding: 5px 14px; font-size: 12px;
+}
+.view-switch button + button { border-left: 1px solid var(--border); }
+.view-switch button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* ---------- table browser ---------- */
+
+#table-wrap {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  background: var(--panel);
+}
+
+#table-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+}
+#table-toolbar .spacer { flex: 1; }
+#table-search { min-width: 220px; }
+#table-toolbar button { font-size: 12px; padding: 5px 10px; }
+
+#table-scope {
+  flex: 0 0 auto; padding: 8px 12px 6px;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+}
+#table-scope .source-tag { margin: 0; }
+#table-scope .scope-text { font-size: 12px; color: var(--muted); }
+/* The caveat is part of the data, not decoration, so it gets a full line. */
+#table-scope .scope-note {
+  flex-basis: 100%; margin: 2px 0 0; font-size: 11px; color: var(--muted);
+  max-width: 90ch;
+}
+
+/* The table scrolls inside its own box so the header row, the toolbar and the
+ * pager all stay put while the rows move. */
+#table-body { flex: 1; min-height: 0; overflow: auto; padding: 0 12px; }
+#table-body > .empty { padding: 12px 0; }
+
+table.browse { border-collapse: separate; border-spacing: 0; }
+table.browse th, table.browse td { border: 0; border-bottom: 1px solid var(--border); }
+table.browse thead th {
+  position: sticky; z-index: 2; background: var(--panel);
+  white-space: nowrap;
+}
+table.browse thead tr.head-row th { top: 0; padding: 6px 8px; }
+/* Second sticky row: its offset has to clear the label row above it. */
+table.browse thead tr.filter-row th { top: 29px; padding: 0 4px 5px; }
+
+table.browse th.sortable { cursor: pointer; user-select: none; }
+table.browse th.sortable:hover { color: var(--accent); }
+table.browse th.sorted { color: var(--accent); }
+table.browse .sort-mark { font-style: normal; font-size: 10px; }
+
+table.browse .filter-cell input {
+  width: 100%; min-width: 70px; padding: 3px 6px;
+  font: 11px var(--mono); border-radius: 4px;
+}
+
+table.browse tbody tr { cursor: pointer; }
+table.browse tbody tr:hover td { background: var(--accent-soft); }
+table.browse td { max-width: 300px; }
+table.browse td.num, table.browse th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.browse .nil { color: var(--muted); }
+table.browse .empty-cell {
+  color: var(--muted); font-family: inherit; font-size: 13px;
+  white-space: normal; padding: 14px 8px;
+}
+
+#table-pager {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-top: 1px solid var(--border);
+}
+#table-pager button { font-size: 12px; padding: 4px 10px; }
+#table-pager button:disabled { opacity: .45; cursor: default; }
+#table-status { font: 11px var(--mono); color: var(--muted); }
+#table-limit { margin-left: auto; }
