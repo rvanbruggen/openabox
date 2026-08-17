@@ -119,12 +119,20 @@ async def search(
     name: str = Query(..., min_length=2),
     refresh: bool = Query(False, description="Bypass cache and re-query the API"),
 ):
-    """Search by company name.
+    """Search by company or person name.
 
     Cache-first: the local full-text index is consulted before spending API
     quota. Note the upstream endpoint caps results at 10 with no pagination,
     so the cache will often be the richer source over time.
+
+    People are always searched locally, whatever `refresh` says. They are
+    shareholders and directors read out of NBB filings, and no upstream
+    endpoint serves them — so "re-query the register" is not a thing that can
+    be done for a person, and skipping them when `refresh` is set would make
+    them silently vanish from results.
     """
+    people = await _search_people(name)
+
     if not refresh:
         cached = await graph.run_read(
             """
@@ -136,12 +144,31 @@ async def search(
             """,
             term=name,
         )
-        if cached:
-            return {"source": "cache", "count": len(cached), "results": cached}
+        if cached or people:
+            return {
+                "source": "cache",
+                "count": len(cached),
+                "results": cached,
+                "people": people,
+            }
 
     try:
         payloads = await _client().search_by_name(name)
     except CBEError as exc:
+        # The register knows nothing about people, so a failed company lookup
+        # should not discard person matches the graph could already answer —
+        # searching a director's name with `live` ticked would otherwise return
+        # an error where a plain search returns hits. The failure is still
+        # reported, just not at the cost of the results we do have.
+        if people:
+            return {
+                "source": "cache",
+                "count": 0,
+                "results": [],
+                "people": people,
+                "note": f"The register could not be reached ({exc}). "
+                        f"Showing people already in your graph.",
+            }
         raise HTTPException(status_code=exc.status_code or 502, detail=str(exc))
 
     await ingest.ingest_many(payloads)
@@ -149,8 +176,41 @@ async def search(
         "source": "cbeapi",
         "count": len(payloads),
         "results": payloads,
+        "people": people,
         "note": "Upstream search returns at most 10 results.",
     }
+
+
+async def _search_people(name: str) -> list[dict]:
+    """Shareholders and directors matching a name, with what they hold.
+
+    The counts are `count(DISTINCT company)`, not a count of edges. Ownership
+    edges are merged on `as_of`, so someone who has held the same stake through
+    five filed years carries five edges to one company — counting edges would
+    report them as owning five companies.
+    """
+    return await graph.run_read(
+        """
+        CALL db.index.fulltext.queryNodes('person_names', $term)
+        YIELD node, score
+        OPTIONAL MATCH (node)-[:SHAREHOLDER_OF]->(owned:Company)
+        WITH node, score, collect(DISTINCT owned) AS owned
+        OPTIONAL MATCH (node)-[:DIRECTOR_OF]->(led:Company)
+        WITH node, score, owned, collect(DISTINCT led) AS led
+        RETURN node.key AS key,
+               node.name AS name,
+               node._key_basis AS key_basis,
+               size(owned) AS owns,
+               size(led) AS directs,
+               // Someone who both owns and directs the same company would
+               // otherwise be listed against it twice.
+               [c IN owned + [x IN led WHERE NOT x IN owned]
+                  | c.denomination][0..4] AS companies,
+               score
+        ORDER BY score DESC LIMIT 15
+        """,
+        term=name,
+    )
 
 
 @app.get("/api/company/{cbe_number}")
@@ -776,6 +836,29 @@ def _as_series_row(metrics: dict, deposit: dict) -> dict:
         "source_urls": cbso_client.deposit_urls(deposit.get("id")),
     }
     return financials.derive(row)
+
+
+@app.get("/api/graph/person")
+async def person_graph(key: str = Query(..., description="Person.key")):
+    """One person and everything they hold or run, ready for the canvas.
+
+    Keyed rather than pathed because a person's key contains `|` separators,
+    which do not survive a path segment cleanly — the same reason the address
+    and city endpoints take their key as a query parameter.
+    """
+    rows = await graph.run_read(
+        """
+        MATCH (p:Person {key: $key})
+        OPTIONAL MATCH p1 = (p)-[:SHAREHOLDER_OF]->(:Company)
+        OPTIONAL MATCH p2 = (p)-[:DIRECTOR_OF]->(:Company)
+        OPTIONAL MATCH p3 = (p)-[:RESIDES_AT]->(:Address)
+        RETURN p, p1, p2, p3
+        """,
+        key=key,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Person not in the graph")
+    return graph.collect_graph(rows)
 
 
 @app.get("/api/graph/company/{cbe_number}/ownership")

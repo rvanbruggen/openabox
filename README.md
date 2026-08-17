@@ -11,7 +11,7 @@ the host you put it on. See [Installation](#installation) to get it running.
 
 ## Version
 
-**0.7.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
+**0.8.0** — see [CHANGELOG.md](CHANGELOG.md) for what is in it.
 
 The version is defined once, in [`api/app/version.py`](api/app/version.py), and
 everything else reads it from there:
@@ -21,13 +21,13 @@ everything else reads it from there:
 | `GET /health` | `version` field |
 | `GET /docs` (OpenAPI) | FastAPI `version` |
 | Web UI header | fetched from `/health`, never hardcoded |
-| Git | annotated tag `v0.7.0` |
+| Git | annotated tag `v0.8.0` |
 
 The licence follows the same route — `__license__` in the same file, reported
 by `/health`, rendered in `/docs` and in the UI footer.
 
 Nothing duplicates the string, so the UI cannot drift from the backend that is
-actually running — if the header says `v0.7.0`, that is the code answering.
+actually running — if the header says `v0.8.0`, that is the code answering.
 
 ## Status
 
@@ -42,6 +42,7 @@ actually running — if the header says `v0.7.0`, that is the code answering.
 | Shareholder / director ingestion (NBB annual accounts) | Verified end-to-end on 4 live filings |
 | Right-click investigation + ownership rendering | Verified in a browser |
 | Financial history panel | Verified on full, abbreviated and micro filings |
+| Person search (shareholders, directors) | Verified in a browser against live graph data |
 | Table browser (11 tables, filters, CSV) | Routes and query building verified; Cypher not yet run against live data |
 | Staatsblad ingestion (changes between filings) | Not started |
 
@@ -194,6 +195,114 @@ docker compose run --rm --no-deps -v ./api/tests:/srv/tests api sh -c 'for t in 
 shareholder/director extraction and identity keys, `test_financials.py` the
 rubriek-code metrics, and `test_browse.py` the table query building — including
 that an unknown column or sort key is rejected rather than interpolated.
+
+## Architecture
+
+Two containers on your host, three read-only sources on the internet, and one
+rule connecting them: **a remote source is asked once, and everything after
+that is answered from your own graph.**
+
+```
+  your machine / network                        the internet
+  ┌───────────────────────────────────────┐     ┌──────────────────────────┐
+  │  Browser                              │     │  cbeapi.be               │
+  │   static UI, no build step, no CDN    │     │   CBE/KBO register       │
+  │            │ same-origin fetch        │     │   identity · address     │
+  │            ▼                          │     │   NACE · form · status   │
+  │  ┌─────────────────────────────┐      │     └──────────────────────────┘
+  │  │  API container (FastAPI)    │──────┼────────────────▲   Bearer key
+  │  │   cbe_client · cbso_client  │      │                    quota-limited
+  │  │   xbrl · financials         │      │     ┌──────────────────────────┐
+  │  │   ingest · browse           │──────┼────▶│  NBB Central Balance     │
+  │  └─────────────────────────────┘      │     │  Sheet Office            │
+  │            │ Bolt                     │     │   shareholders·directors │
+  │            ▼                          │     │   participations·figures │
+  │  ┌─────────────────────────────┐      │     └──────────────────────────┘
+  │  │  Neo4j container            │      │
+  │  │   the cache and the answer  │      │     Nothing else is contacted.
+  │  │   volume: neo4j-data        │      │     Nothing is ever sent out
+  │  └─────────────────────────────┘      │     except the lookup itself.
+  └───────────────────────────────────────┘
+```
+
+The browser talks only to the API container, on the origin it was served from —
+there is no base URL to configure and no third-party asset to fetch. The API
+container is the only thing that talks to the outside world.
+
+### What each source supplies
+
+| Source | Auth | Supplies | Does **not** supply |
+|---|---|---|---|
+| **cbeapi.be** (CBE/KBO) | Bearer key, quota-limited | Company identity, addresses, establishments, NACE codes, legal form and status | Any ownership, officers or financials |
+| **NBB CBSO** — Consult | none | Shareholders, directors, participations, auditor, balance sheet and P&L, as filed | — |
+| **NBB CBSO** — web services | subscription key | The same, sanctioned for systematic use | — |
+
+The split matters: the register says a company *exists* and where; the filings
+say who *owns* it and how it is doing. Neither knows what the other holds, and
+the graph is where they meet — on the CBE number, which both use.
+
+### How a lookup flows
+
+Every read path is cache-first, and the two caches expire independently
+because the underlying data changes at different rates.
+
+| Step | What happens |
+|---|---|
+| 1 | The UI calls the API. Nothing is fetched remotely yet. |
+| 2 | The API asks Neo4j. A hit that is still inside its TTL is returned, tagged `source: cache`. |
+| 3 | On a miss — or when **live** is ticked — the remote source is called. |
+| 4 | The response is written to Neo4j with provenance, then returned, tagged with the source it came from. |
+
+Ticking **live** skips step 2 for register lookups. It does not skip people or
+shareholdings: those exist only in filings already ingested, so there is no
+register to re-ask.
+
+### How data enters and is refreshed
+
+Ingestion is `MERGE`-based throughout, which is what makes re-running it safe.
+The uniqueness constraints in [`graph.py`](api/app/graph.py) are what make
+`MERGE` idempotent rather than duplicating nodes.
+
+| Property | Set on | Meaning |
+|---|---|---|
+| `_source` | every node | `cbeapi` or `nbb-cbso` — which system said so |
+| `_fetched_at` | every node | when this app last wrote it |
+| `_hydrated` | `Company` | `true` = full record fetched; `false` = named by someone else's filing and not yet looked up |
+| `_cbso_fetched_at` | `Company` | when ownership was last pulled, separate from the register TTL |
+| `as_of` | ownership edges | the filing's period end — **part of the merge key** |
+
+Two consequences worth knowing:
+
+- **`_hydrated` is what lets the graph grow.** A shareholder named in a filing
+  becomes a `Company` node immediately, marked unhydrated. It is a stub with a
+  name and a CBE number until someone looks it up, at which point it fills in.
+  Without the flag, "we have no establishments for this company" and "we have
+  never fetched this company" would be indistinguishable.
+- **Ownership edges are keyed by `as_of`, so history accumulates.** Re-ingesting
+  the same filing updates that year's edge; ingesting the next year's filing
+  adds one. Merging without the date would overwrite 2019's shareholders with
+  2025's and silently destroy the history.
+
+TTLs: `OPENABOX_CACHE_TTL_DAYS` (default 90) for register records, which change
+slowly; `OPENABOX_CBSO_TTL_DAYS` (default 180) for ownership and financials,
+which change once a year when accounts are filed. `?refresh=true` overrides
+either.
+
+### Reading it back
+
+Three ways out of the same graph, all read-only:
+
+- The **graph canvas** — a company's neighbourhood, expanded a node at a time.
+- The **table browser** — any entity or edge type as sortable, filterable rows,
+  with CSV export.
+- The **Cypher console** — arbitrary queries, run in a Neo4j **read
+  transaction**, so read-only is enforced by the database rather than by
+  pattern-matching for dangerous keywords.
+
+The browse endpoint builds its Cypher as a string, because Cypher cannot
+parameterise a label or property name. Every entity, column and sort key is
+therefore checked against a server-side registry and rejected if unknown; only
+filter *values* travel as parameters.
 
 ## Graph model
 

@@ -41,7 +41,7 @@
           <option value="2003">2003</option>
         </select>
         <button type="submit">Search</button>
-        <label class="refresh" title="Bypass the cache and spend an API call">
+        <label class="refresh" title="Off: answer from your local graph. On: ask the register again and spend an API call.">
           <input type="checkbox" id="refresh"> live
         </label>
       </div>
@@ -62,6 +62,12 @@
         <span class="field-hint">Any combination — city alone is fine.</span>
       </div>
     </form>
+
+    <!-- States plainly which of the two sources the next search will use.
+         "live" alone did not say what it toggled, and the difference costs
+         API quota. Kept outside the form, which lays its children out in a
+         row. -->
+    <p id="source-hint" class="source-hint"></p>
   </header>
 
   <main>

@@ -59,6 +59,11 @@ SCHEMA_STATEMENTS = [
     # Lets name search be answered from cache instead of spending API quota.
     "CREATE FULLTEXT INDEX company_names IF NOT EXISTS "
     "FOR (c:Company) ON EACH [c.denomination, c.commercial_name, c.abbreviation]",
+    # People come only from NBB filings, so they exist in the graph or nowhere —
+    # there is no upstream endpoint to fall back to. Without this index a
+    # shareholder or director could be looked at but never looked up.
+    "CREATE FULLTEXT INDEX person_names IF NOT EXISTS "
+    "FOR (p:Person) ON EACH [p.name, p.first_name, p.last_name]",
 ]
 
 

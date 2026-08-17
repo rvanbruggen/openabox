@@ -3,6 +3,42 @@
 All notable changes to OpenABox. Versions follow [semantic versioning](https://semver.org).
 While the major version is 0, the interface may change between minor versions.
 
+## [0.8.0] — 2026-08-16
+
+### Added
+- **The search box finds people, not just companies.** Shareholders and
+  directors extracted from NBB filings are now searchable by name, listed
+  alongside company hits with what each person owns and directs. Selecting one
+  puts them on the canvas with their stakes, their mandates and their home
+  address. Backed by a new `person_names` full-text index; `GET /api/search`
+  gained a `people` array and `GET /api/graph/person?key=` returns one person's
+  neighbourhood.
+- **An Architecture section in the README** — the local containers and the
+  remote sources, a table of what each source supplies and what it does not,
+  the cache-first request flow, and how records enter and are refreshed:
+  the provenance properties, both TTLs, and why `_hydrated` and `as_of` are
+  load-bearing rather than incidental.
+
+### Changed
+- **The *live* checkbox says what it does.** A line under the search bar states
+  which source the next search will use and what it costs: *cached — answers
+  from your own graph, free and instant*, or *live — asks the CBE register
+  again and stores the answer. Spends one API call per page of results*. One
+  word and a tooltip did not convey that one of the two spends quota.
+
+### Fixed
+- **A failed register call discarded person matches.** With *live* ticked and
+  the register unreachable, `/api/search` raised rather than returning the
+  people the graph could already answer — so searching a director's name
+  errored where the same search without *live* returned hits. The upstream
+  failure is now reported in a `note` alongside those results, and still raises
+  when there is nothing else to show.
+- People are searched locally whatever `refresh` says. They come only from
+  filings already ingested and no register endpoint serves them, so skipping
+  them under *live* would have made them vanish for no reachable reason.
+- Someone who both owns and directs the same company was listed against it
+  twice in the search results.
+
 ## [0.7.0] — 2026-08-16
 
 ### Fixed

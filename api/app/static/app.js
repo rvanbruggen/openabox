@@ -869,13 +869,60 @@ async function showCityOccupants(node) {
   wireOccupants(box);
 }
 
+/* People found by the same search box. They come from NBB filings, so they
+ * exist only in the graph — a name that has never appeared in a filing this
+ * instance has ingested will not be here, and no amount of `live` will find
+ * it. The empty state says so rather than implying the register was asked. */
+function peopleSection(people) {
+  if (!people || !people.length) return '';
+  const rows = people.map((p) => {
+    const holds = [
+      p.owns ? `owns ${p.owns}` : '',
+      p.directs ? `directs ${p.directs}` : '',
+    ].filter(Boolean).join(' · ') || 'no holdings recorded';
+    const via = (p.companies || []).filter(Boolean).join(', ');
+    return `<div class="result person" data-key="${esc(p.key)}">
+      <div class="name">${esc(p.name)}</div>
+      <div class="meta">${holds}${via ? ' · ' + esc(truncate(via, 44)) : ''}</div>
+    </div>`;
+  }).join('');
+  return `<h3 class="occupants-heading">People
+    <span class="count">${people.length}</span></h3>${rows}`;
+}
+
+function wirePeople(box) {
+  box.querySelectorAll('.result.person').forEach((el) => {
+    el.addEventListener('click', () => loadPerson(el.dataset.key));
+  });
+}
+
+async function loadPerson(key) {
+  clearGraph();
+  try {
+    mergeGraph(await api(`/api/graph/person?key=${encodeURIComponent(key)}`));
+  } catch (err) {
+    console.warn('person graph failed', err);
+  }
+}
+
 function showResults(data, context) {
   const box = document.getElementById('results');
   const results = data.results || [];
-  if (!results.length) {
+  const people = data.people || [];
+  if (!results.length && !people.length) {
     box.innerHTML =
       `<p class="empty">Nothing found${context ? ` for ${context}` : ''}. ` +
-      `Tick <em>live</em> to query the API.</p>`;
+      `Tick <em>live</em> to query the register — though people and ` +
+      `shareholdings only ever come from filings already ingested.</p>`;
+    return;
+  }
+  if (!results.length) {
+    // People but no companies: still a hit, and saying "nothing found" above a
+    // list of matches would be plainly wrong.
+    box.innerHTML =
+      `<div class="source-tag">${data.source} · ${people.length} person(s)` +
+      `${context ? ` · ${context}` : ''}</div>` + peopleSection(people);
+    wirePeople(box);
     return;
   }
   const items = results.map((r) => {
@@ -905,10 +952,11 @@ function showResults(data, context) {
   box.innerHTML =
     `<div class="source-tag">${data.source} · ${results.length} result(s)` +
     `${p && p.total ? ` of ${p.total}` : ''}${context ? ` · ${context}` : ''}</div>` +
-    truncated + items;
-  box.querySelectorAll('.result').forEach((el) => {
+    truncated + items + peopleSection(people);
+  box.querySelectorAll('.result:not(.person)').forEach((el) => {
     el.addEventListener('click', () => loadCompany(el.dataset.cbe));
   });
+  wirePeople(box);
 }
 
 async function loadCompany(cbe) {
@@ -926,8 +974,8 @@ async function loadCompany(cbe) {
 /* ---------- search ---------- */
 
 const PLACEHOLDERS = {
-  auto:    'Company name, NACE code, address, or 0716.663.615',
-  name:    'Company name, e.g. Colruyt',
+  auto:    'Company or person name, NACE code, address, or 0716.663.615',
+  name:    'Company or person name, e.g. Colruyt',
   number:  'CBE / VAT number, e.g. 0716.663.615 or BE0716663615',
   nace:    'NACE code, e.g. 62 or 62010 (prefix matches sub-codes)',
   address: 'Edingensesteenweg 196, 1500 Halle',
@@ -950,6 +998,25 @@ modeSelect.addEventListener('change', () => {
   naceVersion.hidden = mode !== 'nace';
   (structured ? document.getElementById('addr-street') : searchInput).focus();
 });
+
+/* Say which source the next search will use. The checkbox is one word and the
+ * difference between the two is real — one is free and instant, the other
+ * spends register quota — so the consequence is spelled out rather than left
+ * to a tooltip. */
+const refreshBox = document.getElementById('refresh');
+const sourceHint = document.getElementById('source-hint');
+
+function updateSourceHint() {
+  sourceHint.innerHTML = refreshBox.checked
+    ? '<b>live</b> — asks the CBE register again and stores the answer. ' +
+      'Spends one API call per page of results.'
+    : '<b>cached</b> — answers from your own graph, free and instant. ' +
+      'Tick <em>live</em> to re-query the register.';
+  sourceHint.classList.toggle('is-live', refreshBox.checked);
+}
+
+refreshBox.addEventListener('change', updateSourceHint);
+updateSourceHint();
 
 /* Read the explicit address inputs, dropping the blanks. */
 function addressFromFields() {

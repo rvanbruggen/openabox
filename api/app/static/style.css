@@ -155,6 +155,21 @@ button.secondary { background: transparent; color: var(--text); border-color: va
 
 .refresh { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 
+/* Which source the next search will use. Muted when cached, accented when
+   live, because live is the one that costs something. */
+.source-hint { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
+.source-hint b { font-weight: 600; }
+.source-hint.is-live { color: var(--accent); }
+
+/* People sit in the same result list as companies but lead somewhere else —
+   a person has no CBE number and no register record, only holdings. */
+.result.person { border-left: 3px solid #b5527a; }
+.result.person .name::before {
+  content: '';
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: #b5527a; margin-right: 6px; vertical-align: 1px;
+}
+
 .quota { margin-left: auto; font: 11px var(--mono); color: var(--muted); }
 
 main { flex: 1; display: flex; min-height: 0; }
